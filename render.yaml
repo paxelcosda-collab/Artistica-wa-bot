@@ -1,0 +1,12 @@
+services:
+  - type: web
+    name: artistica-wa-bot
+    env: node
+    plan: free
+    buildCommand: npm install
+    startCommand: node index.js
+    envVars:
+      - key: WA_PHONE_NUMBER
+        value: 6281703553530
+      - key: ANTHROPIC_API_KEY
+        sync: false
