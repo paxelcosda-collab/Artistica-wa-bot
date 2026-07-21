@@ -1,18 +1,17 @@
 require('dotenv').config();
 const express = require('express');
-const { default: makeWASocket, DisconnectReason, useMultiFileAuthState, makeCacheableSignalKeyStore } = require('@whiskeysockets/baileys');
+const { Client, LocalAuth } = require('whatsapp-web.js');
 const Anthropic = require('@anthropic-ai/sdk');
-const pino = require('pino');
+const QRCode = require('qrcode');
 
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
-const PHONE_NUMBER = (process.env.WA_PHONE_NUMBER || '6281703553530').replace(/\D/g, '');
 
 let botStatus = 'Starting...';
-let currentPairingCode = null;
+let qrDataUrl = null;
 let botEnabled = true;
 const conversations = {};
 
-// ── Express dashboard (required by Render to keep service alive) ──────────────
+// ── Express dashboard (required by Railway to keep service alive) ──────────────
 const app = express();
 
 app.get('/', (req, res) => {
@@ -21,7 +20,6 @@ app.get('/', (req, res) => {
 <meta http-equiv="refresh" content="10">
 <style>body{font-family:sans-serif;padding:40px;max-width:620px;margin:auto}
 .card{background:#f9f9f9;border:1px solid #ddd;border-radius:10px;padding:24px;margin:20px 0}
-.code{font-size:36px;font-weight:bold;letter-spacing:6px;color:#1a7f37;margin:10px 0}
 .status-ok{color:#1a7f37}.status-wait{color:#e67e00}</style></head>
 <body>
 <h1>🤖 Artistica WhatsApp AI Bot</h1>
@@ -29,15 +27,14 @@ app.get('/', (req, res) => {
   <strong>Status:</strong>
   <span class="${botStatus.includes('Connected') ? 'status-ok' : 'status-wait'}">${botStatus}</span>
 </div>
-${currentPairingCode ? `
+${qrDataUrl ? `
 <div class="card" style="border-color:#1a7f37;background:#e8f5e9">
-  <h2 style="margin:0 0 8px">📱 Enter this code in WhatsApp</h2>
-  <div class="code">${currentPairingCode}</div>
+  <h2 style="margin:0 0 12px">📱 Scan this QR code with WhatsApp</h2>
+  <img src="${qrDataUrl}" style="width:256px;height:256px;display:block">
   <ol style="margin-top:16px">
-    <li>Open WhatsApp on <strong>+${PHONE_NUMBER}</strong></li>
+    <li>Open WhatsApp on <strong>+62 817 0355 3530</strong></li>
     <li>Tap <strong>⋮ Menu → Linked Devices → Link a Device</strong></li>
-    <li>Tap <strong>"Link with phone number instead"</strong></li>
-    <li>Enter the code above</li>
+    <li>Point camera at the QR code above</li>
   </ol>
 </div>` : ''}
 <p style="color:#aaa;font-size:12px">Auto-refreshes every 10 seconds</p>
@@ -131,95 +128,77 @@ async function getAIReply(contactId, text) {
 
 
 // ── WhatsApp bot ───────────────────────────────────────────────────────────────
-async function startBot() {
-    const { state, saveCreds } = await useMultiFileAuthState('auth_session');
+const client = new Client({
+    authStrategy: new LocalAuth({ dataPath: './auth_session' }),
+    puppeteer: {
+        headless: true,
+        args: [
+            '--no-sandbox',
+            '--disable-setuid-sandbox',
+            '--disable-dev-shm-usage',
+            '--disable-accelerated-2d-canvas',
+            '--no-first-run',
+            '--no-zygote',
+            '--single-process',
+            '--disable-gpu',
+        ]
+    }
+});
 
-    const sock = makeWASocket({
-        auth: {
-            creds: state.creds,
-            keys: makeCacheableSignalKeyStore(state.keys, pino({ level: 'silent' })),
-        },
-        logger: pino({ level: 'silent' }),
-        browser: ['Artistica Bot', 'Chrome', '1.0'],
-    });
+client.on('qr', async (qr) => {
+    console.log('QR received — open the dashboard URL to scan it');
+    botStatus = 'Waiting for QR scan — open the dashboard URL';
+    try {
+        qrDataUrl = await QRCode.toDataURL(qr);
+    } catch (err) {
+        console.error('QR generation error:', err.message);
+    }
+});
 
-    sock.ev.on('creds.update', saveCreds);
+client.on('ready', () => {
+    qrDataUrl = null;
+    botStatus = '✅ Connected — bot is running';
+    console.log('✅ WhatsApp connected! Bot is running.\n');
+});
 
-    sock.ev.on('connection.update', async ({ connection, lastDisconnect, qr }) => {
-        // When QR fires it means socket connected — request pairing code instead
-        if (qr && !state.creds.registered) {
-            botStatus = 'Waiting for pairing code...';
-            try {
-                await new Promise(r => setTimeout(r, 1500));
-                const code = await sock.requestPairingCode(PHONE_NUMBER);
-                currentPairingCode = code?.match(/.{1,4}/g)?.join('-') || code;
-                botStatus = 'Waiting for you to enter the pairing code in WhatsApp';
-                console.log(`\n📱 PAIRING CODE: ${currentPairingCode}\n`);
-                console.log(`Open your Render service URL to see it in a nice page.\n`);
-            } catch (err) {
-                console.error('Pairing code error:', err.message);
-                botStatus = 'Error getting pairing code — check logs';
-            }
-        }
+client.on('disconnected', (reason) => {
+    botStatus = 'Reconnecting...';
+    console.log(`Disconnected (${reason}), reinitializing in 5s...`);
+    setTimeout(() => {
+        client.initialize().catch(err => console.error('Reinit error:', err.message));
+    }, 5000);
+});
 
-        if (connection === 'open') {
-            currentPairingCode = null;
-            botStatus = '✅ Connected — bot is running';
-            console.log('✅ WhatsApp connected! Bot is running.\n');
-        }
+client.on('message', async (msg) => {
+    if (msg.from.endsWith('@g.us')) return;
 
-        if (connection === 'close') {
-            const code = lastDisconnect?.error?.output?.statusCode;
-            const msg = lastDisconnect?.error?.message || 'unknown';
-            if (code === DisconnectReason.loggedOut) {
-                botStatus = '❌ Logged out — restart service';
-                console.log('Logged out. Restart the service.');
-            } else {
-                botStatus = 'Reconnecting...';
-                console.log(`Disconnected (code: ${code}, reason: ${msg}), reconnecting in 5s...`);
-                setTimeout(() => startBot(), 5000);
-            }
-        }
-    });
+    if (msg.fromMe) {
+        if (msg.body === '!off') { botEnabled = false; console.log('Bot PAUSED'); }
+        if (msg.body === '!on')  { botEnabled = true;  console.log('Bot RESUMED'); }
+        return;
+    }
 
-    sock.ev.on('messages.upsert', async ({ messages, type }) => {
-        if (type !== 'notify') return;
+    if (!botEnabled) return;
 
-        for (const msg of messages) {
-            if (msg.key.remoteJid.endsWith('@g.us')) continue;
+    const contact = await msg.getContact();
+    if (contact.isMyContact) return;
 
-            // Admin toggle from Danny
-            if (msg.key.fromMe) {
-                if (msg.message?.conversation === '!off') { botEnabled = false; console.log('Bot PAUSED'); }
-                if (msg.message?.conversation === '!on')  { botEnabled = true;  console.log('Bot RESUMED'); }
-                continue;
-            }
+    const text = msg.body.trim();
+    if (!text) return;
 
-            if (!botEnabled) continue;
+    console.log(`📩 ${msg.from}: ${text}`);
 
-            const text = (
-                msg.message?.conversation ||
-                msg.message?.extendedTextMessage?.text || ''
-            ).trim();
-
-            if (!text) continue;
-
-            const from = msg.key.remoteJid;
-            console.log(`📩 ${from}: ${text}`);
-
-            try {
-                const reply = await getAIReply(from, text);
-                await sock.sendMessage(from, { text: reply }, { quoted: msg });
-                console.log(`🤖 Replied: ${reply.substring(0, 80)}...\n`);
-            } catch (err) {
-                console.error('Error:', err.message);
-                await sock.sendMessage(from, {
-                    text: 'Halo! Terima kasih sudah menghubungi Artistica Jewelry. Kami akan segera membalas.\n\nHello! Thank you for contacting Artistica Jewelry. We will reply shortly.'
-                });
-            }
-        }
-    });
-}
+    try {
+        const reply = await getAIReply(msg.from, text);
+        await msg.reply(reply);
+        console.log(`🤖 Replied: ${reply.substring(0, 80)}...\n`);
+    } catch (err) {
+        console.error('Error:', err.message);
+        await msg.reply(
+            'Halo! Terima kasih sudah menghubungi Artistica Jewelry. Kami akan segera membalas.\n\nHello! Thank you for contacting Artistica Jewelry. We will reply shortly.'
+        );
+    }
+});
 
 console.log('🚀 Starting Artistica WhatsApp AI Bot...');
-startBot();
+client.initialize().catch(err => console.error('Init error:', err.message));

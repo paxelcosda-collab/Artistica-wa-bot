@@ -8,13 +8,10 @@
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.30.0",
-    "@whiskeysockets/baileys": "^6.7.23",
     "dotenv": "^16.0.0",
     "express": "^5.2.1",
-    "pino": "^8.0.0"
-  },
-  "allowScripts": {
-    "@whiskeysockets/baileys@6.7.23": true,
-    "protobufjs@7.6.5": true
+    "puppeteer": "^21.11.0",
+    "qrcode": "^1.5.3",
+    "whatsapp-web.js": "^1.23.0"
   }
 }
