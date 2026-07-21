@@ -8,6 +8,7 @@
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.30.0",
+    "@whiskeysockets/baileys": "^6.7.23",
     "dotenv": "^16.0.0",
     "express": "^5.2.1",
     "pino": "^8.0.0"
