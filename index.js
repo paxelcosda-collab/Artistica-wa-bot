@@ -170,12 +170,13 @@ async function startBot() {
 
         if (connection === 'close') {
             const code = lastDisconnect?.error?.output?.statusCode;
+            const msg = lastDisconnect?.error?.message || 'unknown';
             if (code === DisconnectReason.loggedOut) {
                 botStatus = '❌ Logged out — restart service';
                 console.log('Logged out. Restart the service.');
             } else {
                 botStatus = 'Reconnecting...';
-                console.log('Disconnected, reconnecting in 5s...');
+                console.log(`Disconnected (code: ${code}, reason: ${msg}), reconnecting in 5s...`);
                 setTimeout(() => startBot(), 5000);
             }
         }
