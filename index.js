@@ -8,6 +8,7 @@ const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
 let botStatus = 'Starting...';
 let qrDataUrl = null;
+let pairingCode = null;
 let botEnabled = true;
 const conversations = {};
 
@@ -20,14 +21,25 @@ app.get('/', (req, res) => {
 <meta http-equiv="refresh" content="10">
 <style>body{font-family:sans-serif;padding:40px;max-width:620px;margin:auto}
 .card{background:#f9f9f9;border:1px solid #ddd;border-radius:10px;padding:24px;margin:20px 0}
-.status-ok{color:#1a7f37}.status-wait{color:#e67e00}</style></head>
+.status-ok{color:#1a7f37}.status-wait{color:#e67e00}
+.code{font-size:52px;font-weight:bold;letter-spacing:10px;font-family:monospace;color:#1a7f37;margin:16px 0}</style></head>
 <body>
 <h1>🤖 Artistica WhatsApp AI Bot</h1>
 <div class="card">
   <strong>Status:</strong>
   <span class="${botStatus.includes('Connected') ? 'status-ok' : 'status-wait'}">${botStatus}</span>
 </div>
-${qrDataUrl ? `
+${pairingCode ? `
+<div class="card" style="border-color:#1a7f37;background:#e8f5e9">
+  <h2 style="margin:0 0 12px">📱 Enter this code in WhatsApp</h2>
+  <div class="code">${pairingCode}</div>
+  <ol style="margin-top:16px">
+    <li>Open WhatsApp on <strong>+62 817 0355 3530</strong></li>
+    <li>Tap <strong>⋮ Menu → Linked Devices → Link a Device</strong></li>
+    <li>Tap <strong>"Link with phone number"</strong> (instead of scanning)</li>
+    <li>Enter the code above</li>
+  </ol>
+</div>` : qrDataUrl ? `
 <div class="card" style="border-color:#1a7f37;background:#e8f5e9">
   <h2 style="margin:0 0 12px">📱 Scan this QR code with WhatsApp</h2>
   <img src="${qrDataUrl}" style="width:256px;height:256px;display:block">
@@ -162,17 +174,29 @@ const client = new Client({
 });
 
 client.on('qr', async (qr) => {
-    console.log('QR received — open the dashboard URL to scan it');
-    botStatus = 'Waiting for QR scan — open the dashboard URL';
+    console.log('QR event — requesting pairing code...');
+    botStatus = 'Getting pairing code...';
     try {
-        qrDataUrl = await QRCode.toDataURL(qr);
+        const code = await client.requestPairingCode('6281703553530');
+        pairingCode = code;
+        qrDataUrl = null;
+        botStatus = 'Enter pairing code in WhatsApp — open the dashboard URL';
+        console.log(`📱 Pairing code: ${code}`);
     } catch (err) {
-        console.error('QR generation error:', err.message);
+        console.error('Pairing code failed, falling back to QR:', err.message);
+        pairingCode = null;
+        botStatus = 'Waiting for QR scan — open the dashboard URL';
+        try {
+            qrDataUrl = await QRCode.toDataURL(qr);
+        } catch (qrErr) {
+            console.error('QR generation error:', qrErr.message);
+        }
     }
 });
 
 client.on('ready', () => {
     qrDataUrl = null;
+    pairingCode = null;
     botStatus = '✅ Connected — bot is running';
     console.log('✅ WhatsApp connected! Bot is running.\n');
 });
