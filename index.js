@@ -258,6 +258,8 @@ async function startBot() {
 
             const from = msg.key.remoteJid;
             if (!from || from.endsWith('@g.us') || from === 'status@broadcast') continue;
+            // For @lid JIDs (WhatsApp MDv2 privacy), use senderPn for actual delivery
+            const replyTo = (from.endsWith('@lid') && msg.key.senderPn) ? msg.key.senderPn : from;
 
             if (msg.key.fromMe) {
                 const text = (msg.message?.conversation || msg.message?.extendedTextMessage?.text || '').trim();
@@ -290,7 +292,8 @@ async function startBot() {
             if (!botEnabled) continue;
 
             // Skip excluded numbers (team already handling this conversation)
-            if (excludedNumbers.has(from.split('@')[0])) continue;
+            const phoneNum = replyTo.split('@')[0];
+            if (excludedNumbers.has(phoneNum)) continue;
 
             const text = (
                 msg.message?.conversation ||
@@ -301,20 +304,16 @@ async function startBot() {
 
             if (!text) continue;
 
-            console.log(`📩 ${from}: ${text}`);
-            console.log(`msg.key:`, JSON.stringify(msg.key));
-            console.log(`pushName: ${msg.pushName}, participant: ${msg.participant}`);
+            console.log(`📩 ${replyTo}: ${text}`);
 
             try {
-                const reply = await getAIReply(from, text);
-                // @lid JIDs (WhatsApp MDv2) don't support quoted replies — send plain
-                const sendOpts = from.endsWith('@lid') ? {} : { quoted: msg };
-                await sock.sendMessage(from, { text: reply }, sendOpts);
-                console.log(`🤖 Replied: ${reply.substring(0, 80)}...\n`);
+                const reply = await getAIReply(replyTo, text);
+                await sock.sendMessage(replyTo, { text: reply }, { quoted: msg });
+                console.log(`🤖 Replied to ${replyTo}: ${reply.substring(0, 80)}...\n`);
             } catch (err) {
                 console.error('Error replying:', err.message);
                 try {
-                    await sock.sendMessage(from, {
+                    await sock.sendMessage(replyTo, {
                         text: 'Halo! Terima kasih sudah menghubungi Artistica Jewelry. Kami akan segera membalas.\n\nHello! Thank you for contacting Artistica Jewelry. We will reply shortly.'
                     });
                 } catch (_) {}
