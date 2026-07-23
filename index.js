@@ -1,6 +1,6 @@
 require('dotenv').config();
 const express = require('express');
-const { default: makeWASocket, useMultiFileAuthState, DisconnectReason } = require('@whiskeysockets/baileys');
+const { default: makeWASocket, useMultiFileAuthState, DisconnectReason, fetchLatestBaileysVersion, Browsers } = require('@whiskeysockets/baileys');
 const Anthropic = require('@anthropic-ai/sdk');
 const QRCode = require('qrcode');
 const pino = require('pino');
@@ -174,11 +174,22 @@ async function getAIReply(contactId, text) {
 async function startBot() {
     const { state, saveCreds } = await useMultiFileAuthState('./auth_session');
 
+    let version;
+    try {
+        const result = await fetchLatestBaileysVersion();
+        version = result.version;
+        console.log(`Using WhatsApp version: ${version.join('.')}`);
+    } catch (_) {
+        version = [2, 3000, 1015901307];
+        console.log('Using fallback WhatsApp version');
+    }
+
     const sock = makeWASocket({
+        version,
         auth: state,
         printQRInTerminal: false,
         logger: pino({ level: 'silent' }),
-        browser: ['Artistica Bot', 'Chrome', '120.0.0'],
+        browser: Browsers.ubuntu('Chrome'),
         generateHighQualityLinkPreview: false,
         syncFullHistory: false,
     });
@@ -211,7 +222,7 @@ async function startBot() {
                 try { fs.rmSync('./auth_session', { recursive: true, force: true }); } catch (_) {}
                 setTimeout(() => process.exit(1), 1000);
             } else {
-                setTimeout(startBot, 5000);
+                setTimeout(startBot, 10000);
             }
         } else if (connection === 'open') {
             console.log('✅ WhatsApp connected! Bot is running.');
