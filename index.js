@@ -196,6 +196,19 @@ async function startBot() {
 
     sock.ev.on('creds.update', saveCreds);
 
+    // Track saved contacts — bot only replies to unknown numbers
+    const savedContacts = new Map();
+    sock.ev.on('contacts.upsert', (contacts) => {
+        for (const c of contacts) {
+            if (c.name) savedContacts.set(c.id, true);
+        }
+    });
+    sock.ev.on('contacts.update', (updates) => {
+        for (const u of updates) {
+            if (u.id && u.name) savedContacts.set(u.id, true);
+        }
+    });
+
     sock.ev.on('connection.update', async (update) => {
         const { connection, lastDisconnect, qr } = update;
 
@@ -248,6 +261,9 @@ async function startBot() {
             }
 
             if (!botEnabled) continue;
+
+            // Skip saved contacts — only auto-reply to unknown/new customers
+            if (savedContacts.get(from)) continue;
 
             const text = (
                 msg.message?.conversation ||
