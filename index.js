@@ -267,7 +267,7 @@ async function startBot() {
         browser: Browsers.ubuntu('Chrome'),
         generateHighQualityLinkPreview: false,
         syncFullHistory: false,
-        defaultQueryTimeoutMs: 120000,
+        defaultQueryTimeoutMs: 300000,
         connectTimeoutMs: 60000,
     });
 
