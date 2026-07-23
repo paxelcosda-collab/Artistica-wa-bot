@@ -224,7 +224,7 @@ client.on('disconnected', (reason) => {
     }, 5000);
 });
 
-client.on('message', async (msg) => {
+client.on('message_create', async (msg) => {
     if (msg.from.endsWith('@g.us')) return;
 
     if (msg.fromMe) {
