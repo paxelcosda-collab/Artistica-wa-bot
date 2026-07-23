@@ -302,6 +302,8 @@ async function startBot() {
             if (!text) continue;
 
             console.log(`📩 ${from}: ${text}`);
+            console.log(`msg.key:`, JSON.stringify(msg.key));
+            console.log(`pushName: ${msg.pushName}, participant: ${msg.participant}`);
 
             try {
                 const reply = await getAIReply(from, text);
