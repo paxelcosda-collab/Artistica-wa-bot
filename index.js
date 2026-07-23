@@ -6,11 +6,25 @@ const QRCode = require('qrcode');
 const pino = require('pino');
 
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+const fs = require('fs');
 
 let botStatus = 'Starting...';
 let qrDataUrl = null;
 let botEnabled = true;
 const conversations = {};
+
+// ── Excluded numbers (team manually replied → bot stays silent) ────────────────
+const EXCLUDED_FILE = './auth_session/excluded.json';
+
+function loadExcluded() {
+    try { return new Set(JSON.parse(fs.readFileSync(EXCLUDED_FILE, 'utf8'))); } catch (_) { return new Set(); }
+}
+function saveExcluded(set) {
+    try { fs.writeFileSync(EXCLUDED_FILE, JSON.stringify([...set])); } catch (_) {}
+}
+
+const excludedNumbers = loadExcluded();
+console.log(`Loaded ${excludedNumbers.size} excluded numbers`);
 
 // ── Express dashboard ──────────────────────────────────────────────────────────
 const app = express();
@@ -196,12 +210,6 @@ async function startBot() {
 
     sock.ev.on('creds.update', saveCreds);
 
-    // Numbers to skip auto-reply (saved contacts / team numbers)
-    // Set EXCLUDED_NUMBERS in Railway Variables as comma-separated phone numbers
-    // e.g. 628111234567,628222345678
-    const excludedNumbers = new Set(
-        (process.env.EXCLUDED_NUMBERS || '').split(',').map(n => n.trim()).filter(Boolean)
-    );
 
     sock.ev.on('connection.update', async (update) => {
         const { connection, lastDisconnect, qr } = update;
@@ -248,17 +256,31 @@ async function startBot() {
             if (!from || from.endsWith('@g.us') || from === 'status@broadcast') continue;
 
             if (msg.key.fromMe) {
-                const text = msg.message?.conversation || msg.message?.extendedTextMessage?.text || '';
+                const text = (msg.message?.conversation || msg.message?.extendedTextMessage?.text || '').trim();
                 if (text === '!off') { botEnabled = false; console.log('Bot PAUSED'); }
                 if (text === '!on')  { botEnabled = true;  console.log('Bot RESUMED'); }
+                if (text.startsWith('!include ')) {
+                    const num = text.replace('!include ', '').trim();
+                    excludedNumbers.delete(num);
+                    saveExcluded(excludedNumbers);
+                    console.log(`Re-enabled bot for ${num}`);
+                }
+                // Team manually replied to someone → exclude that number from auto-reply
+                if (text && !text.startsWith('!')) {
+                    const num = from.split('@')[0];
+                    if (!excludedNumbers.has(num)) {
+                        excludedNumbers.add(num);
+                        saveExcluded(excludedNumbers);
+                        console.log(`Auto-excluded ${num} (team replied manually)`);
+                    }
+                }
                 continue;
             }
 
             if (!botEnabled) continue;
 
-            // Skip excluded numbers (saved contacts / team)
-            const phoneNumber = from.split('@')[0];
-            if (excludedNumbers.has(phoneNumber)) continue;
+            // Skip excluded numbers (team already handling this conversation)
+            if (excludedNumbers.has(from.split('@')[0])) continue;
 
             const text = (
                 msg.message?.conversation ||
