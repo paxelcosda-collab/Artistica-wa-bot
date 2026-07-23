@@ -263,6 +263,12 @@ async function startBot() {
                 const text = (msg.message?.conversation || msg.message?.extendedTextMessage?.text || '').trim();
                 if (text === '!off') { botEnabled = false; console.log('Bot PAUSED'); }
                 if (text === '!on')  { botEnabled = true;  console.log('Bot RESUMED'); }
+                if (text.startsWith('!exclude ')) {
+                    const num = text.replace('!exclude ', '').trim();
+                    excludedNumbers.add(num);
+                    saveExcluded(excludedNumbers);
+                    console.log(`Manually excluded ${num}`);
+                }
                 if (text.startsWith('!include ')) {
                     const num = text.replace('!include ', '').trim();
                     excludedNumbers.delete(num);
