@@ -384,11 +384,9 @@ async function startBot() {
 
             try {
                 const reply = await getAIReply(replyTo, text);
-                // For @lid JIDs, send back to the @lid (MDv2 native routing).
-                // senderPn is used only for excluded-number checks and logging.
-                const sendTarget = from.endsWith('@lid') ? from : replyTo;
-                const sent = await sock.sendMessage(sendTarget, { text: reply }, { quoted: msg });
-                console.log(`📤 sent to ${sendTarget}, key: ${sent?.key?.id}`);
+                // Must send to @s.whatsapp.net (senderPn) — sending to @lid returns error 463.
+                const sent = await sock.sendMessage(replyTo, { text: reply }, { quoted: msg });
+                console.log(`📤 sent to ${replyTo}, key: ${sent?.key?.id}`);
                 if (sent?.key?.id) botSentIds.add(sent.key.id);
                 console.log(`🤖 Replied to ${replyTo}: ${reply.substring(0, 80)}...\n`);
             } catch (err) {
