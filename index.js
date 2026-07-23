@@ -58,6 +58,48 @@ ${qrDataUrl ? `
 </body></html>`);
 });
 
+let sockRef = null;
+
+// Send a test message to any number
+app.get('/test-send', async (req, res) => {
+    if (!sockRef) return res.send('Bot not ready');
+    const to = (req.query.to || '6281703134410') + '@s.whatsapp.net';
+    try {
+        const result = await sockRef.sendMessage(to, { text: 'Bot test: ' + new Date().toISOString() });
+        res.json({ success: true, key: result?.key, status: result?.status });
+    } catch (err) {
+        res.json({ success: false, error: err.message });
+    }
+});
+
+// Check if number exists on WhatsApp
+app.get('/check-number', async (req, res) => {
+    if (!sockRef) return res.send('Bot not ready');
+    try {
+        const results = await sockRef.onWhatsApp(req.query.number || '6281703134410');
+        res.json(results);
+    } catch (err) {
+        res.json({ error: err.message });
+    }
+});
+
+// Clear ALL session files (including creds.json) → requires fresh QR scan
+app.get('/clear-all', (req, res) => {
+    try {
+        const cleared = [];
+        for (const f of fs.readdirSync('./auth_session')) {
+            if (f !== 'excluded.json') {
+                fs.rmSync(`./auth_session/${f}`, { force: true, recursive: true });
+                cleared.push(f);
+            }
+        }
+        res.send(`Cleared ALL ${cleared.length} files (QR scan required). Restarting...`);
+        setTimeout(() => process.exit(1), 500);
+    } catch (err) {
+        res.send('Error: ' + err.message);
+    }
+});
+
 // Clear signal session files (keeps creds.json + excluded.json), then restart
 app.get('/clear-sessions', (req, res) => {
     try {
@@ -220,12 +262,13 @@ async function startBot() {
         version,
         auth: state,
         printQRInTerminal: false,
-        logger: pino({ level: 'silent' }),
+        logger: pino({ level: 'info' }),
         browser: Browsers.ubuntu('Chrome'),
         generateHighQualityLinkPreview: false,
         syncFullHistory: false,
     });
 
+    sockRef = sock;
     sock.ev.on('creds.update', saveCreds);
 
     sock.ev.on('messages.update', (updates) => {
