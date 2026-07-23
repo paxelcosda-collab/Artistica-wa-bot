@@ -235,9 +235,6 @@ client.on('message', async (msg) => {
 
     if (!botEnabled) return;
 
-    const contact = await msg.getContact();
-    if (contact.isMyContact) return;
-
     const text = msg.body.trim();
     if (!text) return;
 
