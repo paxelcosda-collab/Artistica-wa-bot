@@ -1,18 +1,18 @@
 require('dotenv').config();
 const express = require('express');
-const { Client, LocalAuth } = require('whatsapp-web.js');
+const { default: makeWASocket, useMultiFileAuthState, DisconnectReason } = require('@whiskeysockets/baileys');
 const Anthropic = require('@anthropic-ai/sdk');
 const QRCode = require('qrcode');
+const pino = require('pino');
 
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
 let botStatus = 'Starting...';
 let qrDataUrl = null;
-let pairingCode = null;
 let botEnabled = true;
 const conversations = {};
 
-// ── Express dashboard (required by Railway to keep service alive) ──────────────
+// ── Express dashboard ──────────────────────────────────────────────────────────
 const app = express();
 
 app.get('/', (req, res) => {
@@ -22,24 +22,14 @@ app.get('/', (req, res) => {
 <style>body{font-family:sans-serif;padding:40px;max-width:620px;margin:auto}
 .card{background:#f9f9f9;border:1px solid #ddd;border-radius:10px;padding:24px;margin:20px 0}
 .status-ok{color:#1a7f37}.status-wait{color:#e67e00}
-.code{font-size:52px;font-weight:bold;letter-spacing:10px;font-family:monospace;color:#1a7f37;margin:16px 0}</style></head>
+</style></head>
 <body>
 <h1>🤖 Artistica WhatsApp AI Bot</h1>
 <div class="card">
   <strong>Status:</strong>
   <span class="${botStatus.includes('Connected') ? 'status-ok' : 'status-wait'}">${botStatus}</span>
 </div>
-${pairingCode ? `
-<div class="card" style="border-color:#1a7f37;background:#e8f5e9">
-  <h2 style="margin:0 0 12px">📱 Enter this code in WhatsApp</h2>
-  <div class="code">${pairingCode}</div>
-  <ol style="margin-top:16px">
-    <li>Open WhatsApp on <strong>+62 817 0355 3530</strong></li>
-    <li>Tap <strong>⋮ Menu → Linked Devices → Link a Device</strong></li>
-    <li>Tap <strong>"Link with phone number"</strong> (instead of scanning)</li>
-    <li>Enter the code above</li>
-  </ol>
-</div>` : qrDataUrl ? `
+${qrDataUrl ? `
 <div class="card" style="border-color:#1a7f37;background:#e8f5e9">
   <h2 style="margin:0 0 12px">📱 Scan this QR code with WhatsApp</h2>
   <img src="${qrDataUrl}" style="width:256px;height:256px;display:block">
@@ -180,85 +170,103 @@ async function getAIReply(contactId, text) {
 }
 
 
-// ── WhatsApp bot ───────────────────────────────────────────────────────────────
-const client = new Client({
-    authStrategy: new LocalAuth({ dataPath: './auth_session' }),
-    puppeteer: {
-        headless: true,
-        args: [
-            '--no-sandbox',
-            '--disable-setuid-sandbox',
-            '--disable-dev-shm-usage',
-            '--disable-accelerated-2d-canvas',
-            '--no-first-run',
-            '--no-zygote',
-            '--single-process',
-            '--disable-gpu',
-        ]
-    }
-});
+// ── WhatsApp bot (Baileys — no browser, low memory) ───────────────────────────
+async function startBot() {
+    const { state, saveCreds } = await useMultiFileAuthState('./auth_session');
 
-client.on('qr', async (qr) => {
-    console.log('QR event — displaying QR code');
-    pairingCode = null;
-    botStatus = 'Waiting for QR scan — open the dashboard URL';
-    try {
-        qrDataUrl = await QRCode.toDataURL(qr);
-    } catch (qrErr) {
-        console.error('QR generation error:', qrErr.message);
-    }
-});
+    const sock = makeWASocket({
+        auth: state,
+        printQRInTerminal: false,
+        logger: pino({ level: 'silent' }),
+        browser: ['Artistica Bot', 'Chrome', '120.0.0'],
+        generateHighQualityLinkPreview: false,
+        syncFullHistory: false,
+    });
 
-client.on('ready', () => {
-    qrDataUrl = null;
-    pairingCode = null;
-    botStatus = '✅ Connected — bot is running';
-    console.log('✅ WhatsApp connected! Bot is running.\n');
-});
+    sock.ev.on('creds.update', saveCreds);
 
-client.on('disconnected', (reason) => {
-    botStatus = 'Reconnecting...';
-    console.log(`Disconnected (${reason}), reinitializing in 5s...`);
-    setTimeout(() => {
-        client.initialize().catch(err => console.error('Reinit error:', err.message));
-    }, 5000);
-});
+    sock.ev.on('connection.update', async (update) => {
+        const { connection, lastDisconnect, qr } = update;
 
-client.on('message_create', async (msg) => {
-    if (msg.from.endsWith('@g.us')) return;
+        if (qr) {
+            console.log('QR event — displaying QR code');
+            botStatus = 'Waiting for QR scan — open the dashboard URL';
+            try {
+                qrDataUrl = await QRCode.toDataURL(qr);
+            } catch (err) {
+                console.error('QR generation error:', err.message);
+            }
+        }
 
-    if (msg.fromMe) {
-        if (msg.body === '!off') { botEnabled = false; console.log('Bot PAUSED'); }
-        if (msg.body === '!on')  { botEnabled = true;  console.log('Bot RESUMED'); }
-        return;
-    }
+        if (connection === 'close') {
+            const statusCode = lastDisconnect?.error?.output?.statusCode;
+            const loggedOut = statusCode === DisconnectReason.loggedOut;
+            console.log(`Connection closed (code ${statusCode}), logged out: ${loggedOut}`);
+            botStatus = 'Reconnecting...';
+            qrDataUrl = null;
 
-    if (!botEnabled) return;
+            if (loggedOut) {
+                console.log('Logged out — clearing session and restarting for fresh QR...');
+                const fs = require('fs');
+                try { fs.rmSync('./auth_session', { recursive: true, force: true }); } catch (_) {}
+                setTimeout(() => process.exit(1), 1000);
+            } else {
+                setTimeout(startBot, 5000);
+            }
+        } else if (connection === 'open') {
+            console.log('✅ WhatsApp connected! Bot is running.');
+            botStatus = '✅ Connected — bot is running';
+            qrDataUrl = null;
+        }
+    });
 
-    const text = msg.body.trim();
-    if (!text) return;
+    sock.ev.on('messages.upsert', async ({ messages, type }) => {
+        if (type !== 'notify') return;
 
-    console.log(`📩 ${msg.from}: ${text}`);
+        for (const msg of messages) {
+            if (!msg.message) continue;
 
-    try {
-        const reply = await getAIReply(msg.from, text);
-        await msg.reply(reply);
-        console.log(`🤖 Replied: ${reply.substring(0, 80)}...\n`);
-    } catch (err) {
-        console.error('Error:', err.message);
-        await msg.reply(
-            'Halo! Terima kasih sudah menghubungi Artistica Jewelry. Kami akan segera membalas.\n\nHello! Thank you for contacting Artistica Jewelry. We will reply shortly.'
-        );
-    }
-});
+            const from = msg.key.remoteJid;
+            if (!from || from.endsWith('@g.us')) continue;
+
+            if (msg.key.fromMe) {
+                const text = msg.message?.conversation || msg.message?.extendedTextMessage?.text || '';
+                if (text === '!off') { botEnabled = false; console.log('Bot PAUSED'); }
+                if (text === '!on')  { botEnabled = true;  console.log('Bot RESUMED'); }
+                continue;
+            }
+
+            if (!botEnabled) continue;
+
+            const text = (
+                msg.message?.conversation ||
+                msg.message?.extendedTextMessage?.text ||
+                msg.message?.imageMessage?.caption ||
+                ''
+            ).trim();
+
+            if (!text) continue;
+
+            console.log(`📩 ${from}: ${text}`);
+
+            try {
+                const reply = await getAIReply(from, text);
+                await sock.sendMessage(from, { text: reply }, { quoted: msg });
+                console.log(`🤖 Replied: ${reply.substring(0, 80)}...\n`);
+            } catch (err) {
+                console.error('Error replying:', err.message);
+                try {
+                    await sock.sendMessage(from, {
+                        text: 'Halo! Terima kasih sudah menghubungi Artistica Jewelry. Kami akan segera membalas.\n\nHello! Thank you for contacting Artistica Jewelry. We will reply shortly.'
+                    });
+                } catch (_) {}
+            }
+        }
+    });
+}
 
 console.log('🚀 Starting Artistica WhatsApp AI Bot...');
-client.initialize().catch(err => {
-    console.error('Init error:', err.message);
-    if (err.message.includes('Execution context') || err.message.includes('Protocol error')) {
-        console.log('Session corrupted — clearing and restarting...');
-        const fs = require('fs');
-        try { fs.rmSync('./auth_session', { recursive: true, force: true }); } catch (_) {}
-        setTimeout(() => process.exit(1), 1000);
-    }
+startBot().catch(err => {
+    console.error('Fatal error:', err.message);
+    process.exit(1);
 });
