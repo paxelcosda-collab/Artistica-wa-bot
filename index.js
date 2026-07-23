@@ -100,17 +100,18 @@ app.get('/clear-all', (req, res) => {
     }
 });
 
-// Clear signal session files (keeps creds.json + excluded.json), then restart
+// Clear only signal session files (NOT pre-keys or app-state-sync), then restart
 app.get('/clear-sessions', (req, res) => {
     try {
         const cleared = [];
         for (const f of fs.readdirSync('./auth_session')) {
-            if (f !== 'creds.json' && f !== 'excluded.json') {
+            if (f !== 'creds.json' && f !== 'excluded.json' &&
+                !f.startsWith('pre-key-') && !f.startsWith('app-state-sync')) {
                 fs.rmSync(`./auth_session/${f}`, { force: true, recursive: true });
                 cleared.push(f);
             }
         }
-        res.send(`Cleared ${cleared.length} session files. Restarting...<br>${cleared.join('<br>')}`);
+        res.send(`Cleared ${cleared.length} signal session files. Restarting...<br>${cleared.join('<br>')}`);
         setTimeout(() => process.exit(1), 500);
     } catch (err) {
         res.send('Error: ' + err.message);
@@ -266,6 +267,8 @@ async function startBot() {
         browser: Browsers.ubuntu('Chrome'),
         generateHighQualityLinkPreview: false,
         syncFullHistory: false,
+        defaultQueryTimeoutMs: 120000,
+        connectTimeoutMs: 60000,
     });
 
     sockRef = sock;
