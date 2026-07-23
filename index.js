@@ -199,23 +199,13 @@ const client = new Client({
 });
 
 client.on('qr', async (qr) => {
-    console.log('QR event — requesting pairing code...');
-    botStatus = 'Getting pairing code...';
+    console.log('QR event — displaying QR code');
+    pairingCode = null;
+    botStatus = 'Waiting for QR scan — open the dashboard URL';
     try {
-        const code = await client.requestPairingCode('6281703553530');
-        pairingCode = code;
-        qrDataUrl = null;
-        botStatus = 'Enter pairing code in WhatsApp — open the dashboard URL';
-        console.log(`📱 Pairing code: ${code}`);
-    } catch (err) {
-        console.error('Pairing code failed, falling back to QR:', err.message);
-        pairingCode = null;
-        botStatus = 'Waiting for QR scan — open the dashboard URL';
-        try {
-            qrDataUrl = await QRCode.toDataURL(qr);
-        } catch (qrErr) {
-            console.error('QR generation error:', qrErr.message);
-        }
+        qrDataUrl = await QRCode.toDataURL(qr);
+    } catch (qrErr) {
+        console.error('QR generation error:', qrErr.message);
     }
 });
 
