@@ -200,12 +200,19 @@ async function startBot() {
     const savedContacts = new Map();
     sock.ev.on('contacts.upsert', (contacts) => {
         for (const c of contacts) {
-            if (c.name) savedContacts.set(c.id, true);
+            if (c.name) {
+                savedContacts.set(c.id, true);
+                console.log(`[contact] saved: ${c.id} → ${c.name}`);
+            }
         }
+        console.log(`[contact] total saved contacts: ${savedContacts.size}`);
     });
     sock.ev.on('contacts.update', (updates) => {
         for (const u of updates) {
-            if (u.id && u.name) savedContacts.set(u.id, true);
+            if (u.id && u.name) {
+                savedContacts.set(u.id, true);
+                console.log(`[contact] updated: ${u.id} → ${u.name}`);
+            }
         }
     });
 
@@ -263,6 +270,7 @@ async function startBot() {
             if (!botEnabled) continue;
 
             // Skip saved contacts — only auto-reply to unknown/new customers
+            console.log(`[msg] from: ${from}, is saved: ${savedContacts.has(from)}`);
             if (savedContacts.get(from)) continue;
 
             const text = (
