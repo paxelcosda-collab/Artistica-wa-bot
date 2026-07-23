@@ -66,8 +66,13 @@ app.get('/test-send', async (req, res) => {
     const to = (req.query.to || '6281703134410') + '@s.whatsapp.net';
     try {
         const result = await sockRef.sendMessage(to, { text: 'Bot test: ' + new Date().toISOString() });
+        if (result?.key?.id) {
+            botSentIds.add(result.key.id);
+            console.log(`🧪 test-send to ${to}, tracking id: ${result.key.id}`);
+        }
         res.json({ success: true, key: result?.key, status: result?.status });
     } catch (err) {
+        console.error(`🧪 test-send to ${to} FAILED:`, err.message);
         res.json({ success: false, error: err.message });
     }
 });
@@ -277,7 +282,8 @@ async function startBot() {
     sock.ev.on('messages.update', (updates) => {
         for (const { key, update } of updates) {
             if (botSentIds.has(key?.id)) {
-                console.log(`📊 Delivery status: ${key.id.substring(0, 8)} → ${update?.status}`);
+                console.log(`📊 Delivery status: ${key.id.substring(0, 8)} → status:${update?.status} (1=pending,2=server,3=delivered,4=read)`);
+                if (update?.status >= 3) botSentIds.delete(key.id);
             }
         }
     });
@@ -384,21 +390,27 @@ async function startBot() {
 
             try {
                 const reply = await getAIReply(replyTo, text);
-                // Send back to the same JID the message arrived on.
-                // @lid: use @lid — the signal session is keyed by @lid, @s.whatsapp.net causes 463.
-                // @s.whatsapp.net: send to it directly.
-                const sendTarget = from.endsWith('@lid') ? from : replyTo;
-                const sent = await sock.sendMessage(sendTarget, { text: reply }, { quoted: msg });
-                console.log(`📤 sent to ${sendTarget}, key: ${sent?.key?.id}`);
+                // Always send to @s.whatsapp.net (replyTo).
+                // If the message arrived via @lid, remap the quoted key's remoteJid to @s.whatsapp.net
+                // so the quoted context doesn't carry an @lid JID (which causes error 463).
+                const quotedMsg = from.endsWith('@lid')
+                    ? { ...msg, key: { ...msg.key, remoteJid: replyTo } }
+                    : msg;
+                const sent = await sock.sendMessage(replyTo, { text: reply }, { quoted: quotedMsg });
+                console.log(`📤 sent to ${replyTo}, key: ${sent?.key?.id}, status: ${sent?.status}`);
                 if (sent?.key?.id) botSentIds.add(sent.key.id);
                 console.log(`🤖 Replied to ${replyTo}: ${reply.substring(0, 80)}...\n`);
             } catch (err) {
-                console.error('Error replying:', err.message);
+                console.error('Error replying (with quote):', err.message);
+                // Fallback: send without quoted context
                 try {
-                    await sock.sendMessage(replyTo, {
-                        text: 'Halo! Terima kasih sudah menghubungi Artistica Jewelry. Kami akan segera membalas.\n\nHello! Thank you for contacting Artistica Jewelry. We will reply shortly.'
-                    });
-                } catch (_) {}
+                    const fallback = conversations[replyTo]?.slice(-1)[0]?.content || 'Halo! Terima kasih sudah menghubungi Artistica Jewelry. Kami akan segera membalas.';
+                    const sent2 = await sock.sendMessage(replyTo, { text: fallback });
+                    console.log(`📤 fallback sent to ${replyTo}, key: ${sent2?.key?.id}, status: ${sent2?.status}`);
+                    if (sent2?.key?.id) botSentIds.add(sent2.key.id);
+                } catch (err2) {
+                    console.error('Error replying (fallback):', err2.message);
+                }
             }
         }
     });
