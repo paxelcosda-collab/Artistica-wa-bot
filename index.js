@@ -253,4 +253,12 @@ client.on('message_create', async (msg) => {
 });
 
 console.log('🚀 Starting Artistica WhatsApp AI Bot...');
-client.initialize().catch(err => console.error('Init error:', err.message));
+client.initialize().catch(err => {
+    console.error('Init error:', err.message);
+    if (err.message.includes('Execution context') || err.message.includes('Protocol error')) {
+        console.log('Session corrupted — clearing and restarting...');
+        const fs = require('fs');
+        try { fs.rmSync('./auth_session', { recursive: true, force: true }); } catch (_) {}
+        setTimeout(() => process.exit(1), 1000);
+    }
+});
