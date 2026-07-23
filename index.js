@@ -232,9 +232,13 @@ async function startBot() {
             qrDataUrl = null;
 
             if (loggedOut) {
-                console.log('Logged out — clearing session and restarting for fresh QR...');
-                const fs = require('fs');
-                try { fs.rmSync('./auth_session', { recursive: true, force: true }); } catch (_) {}
+                console.log('Logged out — clearing session files for fresh QR...');
+                try {
+                    for (const f of fs.readdirSync('./auth_session')) {
+                        if (f !== 'excluded.json')
+                            fs.rmSync(`./auth_session/${f}`, { recursive: true, force: true });
+                    }
+                } catch (_) {}
                 setTimeout(() => process.exit(1), 1000);
             } else {
                 setTimeout(startBot, 10000);
