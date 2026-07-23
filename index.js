@@ -198,23 +198,23 @@ async function startBot() {
 
     // Track saved contacts — bot only replies to unknown numbers
     const savedContacts = new Map();
-    sock.ev.on('contacts.upsert', (contacts) => {
+
+    const trackContacts = (source, contacts) => {
+        if (!contacts || contacts.length === 0) return;
+        let added = 0;
         for (const c of contacts) {
-            if (c.name) {
-                savedContacts.set(c.id, true);
-                console.log(`[contact] saved: ${c.id} → ${c.name}`);
-            }
+            if (c.name) { savedContacts.set(c.id, true); added++; }
         }
-        console.log(`[contact] total saved contacts: ${savedContacts.size}`);
-    });
-    sock.ev.on('contacts.update', (updates) => {
-        for (const u of updates) {
-            if (u.id && u.name) {
-                savedContacts.set(u.id, true);
-                console.log(`[contact] updated: ${u.id} → ${u.name}`);
-            }
+        console.log(`[${source}] ${contacts.length} contacts, ${added} saved, total: ${savedContacts.size}`);
+        for (const c of contacts) {
+            if (c.name) console.log(`  → ${c.id} : ${c.name}`);
         }
-    });
+    };
+
+    sock.ev.on('contacts.upsert', (c) => { console.log(`[contacts.upsert] fired, count: ${c.length}`); trackContacts('contacts.upsert', c); });
+    sock.ev.on('contacts.update', (c) => { console.log(`[contacts.update] fired, count: ${c.length}`); trackContacts('contacts.update', c); });
+    sock.ev.on('contacts.set',    ({ contacts: c }) => { console.log(`[contacts.set] fired, count: ${c?.length}`); trackContacts('contacts.set', c); });
+    sock.ev.on('messaging-history.set', ({ contacts: c }) => { console.log(`[messaging-history.set] contacts: ${c?.length}`); trackContacts('messaging-history.set', c); });
 
     sock.ev.on('connection.update', async (update) => {
         const { connection, lastDisconnect, qr } = update;
