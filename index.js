@@ -314,7 +314,7 @@ async function startBot() {
 
             try {
                 const reply = await getAIReply(replyTo, text);
-                const sent = await sock.sendMessage(replyTo, { text: reply });
+                const sent = await sock.sendMessage(replyTo, { text: reply }, { quoted: msg });
                 if (sent?.key?.id) botSentIds.add(sent.key.id);
                 console.log(`🤖 Replied to ${replyTo}: ${reply.substring(0, 80)}...\n`);
             } catch (err) {
