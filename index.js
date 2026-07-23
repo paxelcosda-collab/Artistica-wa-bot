@@ -12,6 +12,7 @@ let botStatus = 'Starting...';
 let qrDataUrl = null;
 let botEnabled = true;
 const conversations = {};
+const botSentIds = new Set();
 
 // ── Excluded numbers (team manually replied → bot stays silent) ────────────────
 const EXCLUDED_FILE = './auth_session/excluded.json';
@@ -262,6 +263,11 @@ async function startBot() {
             const replyTo = (from.endsWith('@lid') && msg.key.senderPn) ? msg.key.senderPn : from;
 
             if (msg.key.fromMe) {
+                // Skip messages the bot itself sent — don't treat them as team replies
+                if (botSentIds.has(msg.key.id)) {
+                    botSentIds.delete(msg.key.id);
+                    continue;
+                }
                 const text = (msg.message?.conversation || msg.message?.extendedTextMessage?.text || '').trim();
                 if (text === '!off') { botEnabled = false; console.log('Bot PAUSED'); }
                 if (text === '!on')  { botEnabled = true;  console.log('Bot RESUMED'); }
@@ -308,7 +314,8 @@ async function startBot() {
 
             try {
                 const reply = await getAIReply(replyTo, text);
-                await sock.sendMessage(replyTo, { text: reply }, { quoted: msg });
+                const sent = await sock.sendMessage(replyTo, { text: reply });
+                if (sent?.key?.id) botSentIds.add(sent.key.id);
                 console.log(`🤖 Replied to ${replyTo}: ${reply.substring(0, 80)}...\n`);
             } catch (err) {
                 console.error('Error replying:', err.message);
