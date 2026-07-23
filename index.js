@@ -384,9 +384,12 @@ async function startBot() {
 
             try {
                 const reply = await getAIReply(replyTo, text);
-                // Must send to @s.whatsapp.net (senderPn) — sending to @lid returns error 463.
-                const sent = await sock.sendMessage(replyTo, { text: reply }, { quoted: msg });
-                console.log(`📤 sent to ${replyTo}, key: ${sent?.key?.id}`);
+                // Send back to the same JID the message arrived on.
+                // @lid: use @lid — the signal session is keyed by @lid, @s.whatsapp.net causes 463.
+                // @s.whatsapp.net: send to it directly.
+                const sendTarget = from.endsWith('@lid') ? from : replyTo;
+                const sent = await sock.sendMessage(sendTarget, { text: reply }, { quoted: msg });
+                console.log(`📤 sent to ${sendTarget}, key: ${sent?.key?.id}`);
                 if (sent?.key?.id) botSentIds.add(sent.key.id);
                 console.log(`🤖 Replied to ${replyTo}: ${reply.substring(0, 80)}...\n`);
             } catch (err) {
