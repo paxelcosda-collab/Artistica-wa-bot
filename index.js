@@ -58,6 +58,23 @@ ${qrDataUrl ? `
 </body></html>`);
 });
 
+// Clear signal session files (keeps creds.json + excluded.json), then restart
+app.get('/clear-sessions', (req, res) => {
+    try {
+        const cleared = [];
+        for (const f of fs.readdirSync('./auth_session')) {
+            if (f !== 'creds.json' && f !== 'excluded.json') {
+                fs.rmSync(`./auth_session/${f}`, { force: true, recursive: true });
+                cleared.push(f);
+            }
+        }
+        res.send(`Cleared ${cleared.length} session files. Restarting...<br>${cleared.join('<br>')}`);
+        setTimeout(() => process.exit(1), 500);
+    } catch (err) {
+        res.send('Error: ' + err.message);
+    }
+});
+
 app.listen(process.env.PORT || 3000, () =>
     console.log(`Dashboard running on port ${process.env.PORT || 3000}`)
 );
@@ -211,6 +228,13 @@ async function startBot() {
 
     sock.ev.on('creds.update', saveCreds);
 
+    sock.ev.on('messages.update', (updates) => {
+        for (const { key, update } of updates) {
+            if (botSentIds.has(key?.id)) {
+                console.log(`📊 Delivery status: ${key.id.substring(0, 8)} → ${update?.status}`);
+            }
+        }
+    });
 
     sock.ev.on('connection.update', async (update) => {
         const { connection, lastDisconnect, qr } = update;
@@ -314,7 +338,11 @@ async function startBot() {
 
             try {
                 const reply = await getAIReply(replyTo, text);
-                const sent = await sock.sendMessage(replyTo, { text: reply }, { quoted: msg });
+                // For @lid JIDs, send back to the @lid (MDv2 native routing).
+                // senderPn is used only for excluded-number checks and logging.
+                const sendTarget = from.endsWith('@lid') ? from : replyTo;
+                const sent = await sock.sendMessage(sendTarget, { text: reply }, { quoted: msg });
+                console.log(`📤 sent to ${sendTarget}, key: ${sent?.key?.id}`);
                 if (sent?.key?.id) botSentIds.add(sent.key.id);
                 console.log(`🤖 Replied to ${replyTo}: ${reply.substring(0, 80)}...\n`);
             } catch (err) {
