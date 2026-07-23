@@ -305,7 +305,9 @@ async function startBot() {
 
             try {
                 const reply = await getAIReply(from, text);
-                await sock.sendMessage(from, { text: reply }, { quoted: msg });
+                // @lid JIDs (WhatsApp MDv2) don't support quoted replies — send plain
+                const sendOpts = from.endsWith('@lid') ? {} : { quoted: msg };
+                await sock.sendMessage(from, { text: reply }, sendOpts);
                 console.log(`🤖 Replied: ${reply.substring(0, 80)}...\n`);
             } catch (err) {
                 console.error('Error replying:', err.message);
