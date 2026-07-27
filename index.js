@@ -328,8 +328,6 @@ async function startBot() {
     });
 
     sock.ev.on('messages.upsert', async ({ messages, type }) => {
-        if (type !== 'notify') return;
-
         for (const msg of messages) {
             if (!msg.message) continue;
 
@@ -360,8 +358,9 @@ async function startBot() {
                     console.log(`Re-enabled bot for ${num}`);
                 }
                 // Team manually replied to someone → exclude that number from auto-reply
+                // Use replyTo (not from) so @lid JIDs resolve to the same phone number used in checks below
                 if (text && !text.startsWith('!')) {
-                    const num = from.split('@')[0];
+                    const num = replyTo.split('@')[0];
                     if (!excludedNumbers.has(num)) {
                         excludedNumbers.add(num);
                         saveExcluded(excludedNumbers);
@@ -370,6 +369,9 @@ async function startBot() {
                 }
                 continue;
             }
+
+            // Only auto-reply to real-time incoming messages, not history syncs
+            if (type !== 'notify') continue;
 
             if (!botEnabled) continue;
 
