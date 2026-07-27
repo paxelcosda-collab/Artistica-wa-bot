@@ -328,56 +328,69 @@ async function startBot() {
     });
 
     sock.ev.on('messages.upsert', async ({ messages, type }) => {
+        // PASS 1: process all outgoing (fromMe) messages first so exclusions are
+        // applied before we handle any incoming messages in the same batch.
+        // This prevents the race where a customer message and a team reply arrive
+        // in the same batch and the bot replies before seeing the team's reply.
         for (const msg of messages) {
-            if (!msg.message) continue;
+            if (!msg.message || !msg.key.fromMe) continue;
+            const from = msg.key.remoteJid;
+            if (!from || from.endsWith('@g.us') || from === 'status@broadcast') continue;
+            const replyTo = (from.endsWith('@lid') && msg.key.senderPn) ? msg.key.senderPn : from;
+
+            if (botSentIds.has(msg.key.id)) {
+                botSentIds.delete(msg.key.id);
+                continue;
+            }
+            const text = (msg.message?.conversation || msg.message?.extendedTextMessage?.text || '').trim();
+            if (text === '!off') { botEnabled = false; console.log('Bot PAUSED'); }
+            if (text === '!on')  { botEnabled = true;  console.log('Bot RESUMED'); }
+            if (text.startsWith('!exclude ')) {
+                const num = text.replace('!exclude ', '').trim();
+                excludedNumbers.add(num);
+                saveExcluded(excludedNumbers);
+                console.log(`Manually excluded ${num}`);
+            }
+            if (text.startsWith('!include ')) {
+                const num = text.replace('!include ', '').trim();
+                excludedNumbers.delete(num);
+                saveExcluded(excludedNumbers);
+                console.log(`Re-enabled bot for ${num}`);
+            }
+            // Team manually replied → exclude. Store both the resolved phone AND the
+            // raw JID prefix so @lid vs @s.whatsapp.net mismatches are both covered.
+            if (text && !text.startsWith('!')) {
+                const nums = [...new Set([replyTo.split('@')[0], from.split('@')[0]])];
+                let saved = false;
+                for (const num of nums) {
+                    if (!excludedNumbers.has(num)) {
+                        excludedNumbers.add(num);
+                        saved = true;
+                    }
+                }
+                if (saved) {
+                    saveExcluded(excludedNumbers);
+                    console.log(`Auto-excluded ${nums.join('/')} (team replied manually)`);
+                }
+            }
+        }
+
+        // PASS 2: handle incoming customer messages. Only process real-time events.
+        if (type !== 'notify') return;
+
+        for (const msg of messages) {
+            if (!msg.message || msg.key.fromMe) continue;
 
             const from = msg.key.remoteJid;
             if (!from || from.endsWith('@g.us') || from === 'status@broadcast') continue;
-            // For @lid JIDs (WhatsApp MDv2 privacy), use senderPn for actual delivery
             const replyTo = (from.endsWith('@lid') && msg.key.senderPn) ? msg.key.senderPn : from;
-
-            if (msg.key.fromMe) {
-                // Skip messages the bot itself sent — don't treat them as team replies
-                if (botSentIds.has(msg.key.id)) {
-                    botSentIds.delete(msg.key.id);
-                    continue;
-                }
-                const text = (msg.message?.conversation || msg.message?.extendedTextMessage?.text || '').trim();
-                if (text === '!off') { botEnabled = false; console.log('Bot PAUSED'); }
-                if (text === '!on')  { botEnabled = true;  console.log('Bot RESUMED'); }
-                if (text.startsWith('!exclude ')) {
-                    const num = text.replace('!exclude ', '').trim();
-                    excludedNumbers.add(num);
-                    saveExcluded(excludedNumbers);
-                    console.log(`Manually excluded ${num}`);
-                }
-                if (text.startsWith('!include ')) {
-                    const num = text.replace('!include ', '').trim();
-                    excludedNumbers.delete(num);
-                    saveExcluded(excludedNumbers);
-                    console.log(`Re-enabled bot for ${num}`);
-                }
-                // Team manually replied to someone → exclude that number from auto-reply
-                // Use replyTo (not from) so @lid JIDs resolve to the same phone number used in checks below
-                if (text && !text.startsWith('!')) {
-                    const num = replyTo.split('@')[0];
-                    if (!excludedNumbers.has(num)) {
-                        excludedNumbers.add(num);
-                        saveExcluded(excludedNumbers);
-                        console.log(`Auto-excluded ${num} (team replied manually)`);
-                    }
-                }
-                continue;
-            }
-
-            // Only auto-reply to real-time incoming messages, not history syncs
-            if (type !== 'notify') continue;
 
             if (!botEnabled) continue;
 
-            // Skip excluded numbers (team already handling this conversation)
+            // Skip excluded numbers — check both resolved phone and raw JID prefix
             const phoneNum = replyTo.split('@')[0];
-            if (excludedNumbers.has(phoneNum)) continue;
+            const fromNum = from.split('@')[0];
+            if (excludedNumbers.has(phoneNum) || excludedNumbers.has(fromNum)) continue;
 
             const text = (
                 msg.message?.conversation ||
@@ -392,6 +405,12 @@ async function startBot() {
 
             try {
                 const reply = await getAIReply(replyTo, text);
+                // Re-check exclusion after the async AI call — the team may have
+                // replied while we were waiting for the AI response.
+                if (excludedNumbers.has(phoneNum) || excludedNumbers.has(fromNum)) {
+                    console.log(`⚠️ ${phoneNum} excluded while generating reply — discarding`);
+                    continue;
+                }
                 // Always send to @s.whatsapp.net (replyTo).
                 // If the message arrived via @lid, remap the quoted key's remoteJid to @s.whatsapp.net
                 // so the quoted context doesn't carry an @lid JID (which causes error 463).
