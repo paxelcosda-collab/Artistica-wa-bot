@@ -13,6 +13,7 @@ let qrDataUrl = null;
 let botEnabled = true;
 const conversations = {};
 const botSentIds = new Set();
+const processedMsgIds = new Set(); // dedup: Baileys can fire messages.upsert twice for the same message
 
 // ── Excluded numbers (team manually replied → bot stays silent) ────────────────
 const EXCLUDED_FILE = './auth_session/excluded.json';
@@ -380,6 +381,15 @@ async function startBot() {
 
         for (const msg of messages) {
             if (!msg.message || msg.key.fromMe) continue;
+
+            // Deduplication — Baileys sometimes fires the same message twice with type='notify'
+            const msgId = msg.key.id;
+            if (processedMsgIds.has(msgId)) {
+                console.log(`⏭️ Skipping duplicate message ${msgId.substring(0, 8)}`);
+                continue;
+            }
+            processedMsgIds.add(msgId);
+            if (processedMsgIds.size > 500) processedMsgIds.delete(processedMsgIds.values().next().value);
 
             const from = msg.key.remoteJid;
             if (!from || from.endsWith('@g.us') || from === 'status@broadcast') continue;
