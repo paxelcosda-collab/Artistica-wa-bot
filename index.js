@@ -413,6 +413,38 @@ async function startBot() {
             if (!from || from.endsWith('@g.us') || from === 'status@broadcast') continue;
             const replyTo = (from.endsWith('@lid') && msg.key.senderPn) ? msg.key.senderPn : from;
 
+            // ── Admin commands from CS number ──────────────────────────────────
+            {
+                const _admNum = replyTo.split('@')[0];
+                const _admFrom = from.split('@')[0];
+                if (_admNum === '6281333360616' || _admFrom === '6281333360616') {
+                    const _admText = (msg.message?.conversation || msg.message?.extendedTextMessage?.text || '').trim();
+                    const _lower = _admText.toLowerCase();
+                    if (_lower.startsWith('/bot')) {
+                        let _reply;
+                        if (_lower.includes('botdebug')) {
+                            _reply = `OK! from:${_admNum} raw=${_admText.substring(0, 30)}`;
+                        } else if (_lower.startsWith('/botoff ')) {
+                            const _target = _admText.split(/\s+/)[1]?.replace(/[^0-9]/g, '');
+                            if (_target) { excludedNumbers.add(_target); saveExcluded(excludedNumbers); _reply = `Bot dimatikan untuk +${_target}. CS akan melayani manual.`; }
+                            else _reply = 'Format: /botoff 628xxx';
+                        } else if (_lower.startsWith('/boton ')) {
+                            const _target = _admText.split(/\s+/)[1]?.replace(/[^0-9]/g, '');
+                            if (_target) { excludedNumbers.delete(_target); saveExcluded(excludedNumbers); _reply = `Bot diaktifkan kembali untuk +${_target}.`; }
+                            else _reply = 'Format: /boton 628xxx';
+                        }
+                        if (_reply) {
+                            try {
+                                const _sent = await sock.sendMessage(replyTo, { text: _reply });
+                                if (_sent?.key?.id) botSentIds.add(_sent.key.id);
+                                console.log(`🔧 Admin ${_admNum}: ${_admText} → ${_reply}`);
+                            } catch (e) { console.error('Admin cmd reply error:', e.message); }
+                        }
+                        continue;
+                    }
+                }
+            }
+
             if (!botEnabled) continue;
 
             // Skip excluded numbers — check both resolved phone and raw JID prefix
