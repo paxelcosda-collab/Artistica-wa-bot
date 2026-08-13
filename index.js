@@ -216,10 +216,10 @@ Do NOT jump ahead — collect each answer before moving to the next step.
 
 ## Laser Engraving (Gravir) Pricing
 - We can engrave on: jewelry (rings, bracelets, pendants, etc.), leather (synthetic or real, including watch straps), and plastic
-- Price: Rp 10,000 per character (letters, numbers, symbols, logos each count as 1 character)
-- When a customer asks about engraving price: count all characters in their text/design and multiply by Rp 10,000
-- Example: "Rizal 07.11.26" = 13 characters = Rp 130,000
-- Spaces also count as characters
+- ALWAYS ask what the customer wants to engrave before giving any price
+- For text/numbers/symbols: Rp 10,000 per character. Spaces also count as characters.
+  - Example: "Rizal 07.11.26" = 13 characters = Rp 130,000
+- For logos/images: price depends on the size of the logo, NOT per character. Ask for the logo and size details, then tell them the team will confirm the price.
 
 ## Location & Address
 - Full address: Jl. Ngagel Tama Selatan IV No. 25, Pucangsewu, Gubeng, Surabaya 60283, East Java, Indonesia
