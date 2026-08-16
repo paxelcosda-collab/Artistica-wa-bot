@@ -32,19 +32,37 @@ console.log(`Loaded ${excludedNumbers.size} excluded numbers`);
 const app = express();
 
 app.get('/', (req, res) => {
+    const excluded = [...excludedNumbers];
     res.send(`<!DOCTYPE html>
 <html><head><title>Artistica Bot</title>
 <meta http-equiv="refresh" content="10">
-<style>body{font-family:sans-serif;padding:40px;max-width:620px;margin:auto}
-.card{background:#f9f9f9;border:1px solid #ddd;border-radius:10px;padding:24px;margin:20px 0}
-.status-ok{color:#1a7f37}.status-wait{color:#e67e00}
+<style>
+body{font-family:sans-serif;padding:40px;max-width:680px;margin:auto;background:#f5f5f5}
+h1{margin-bottom:8px}
+.card{background:#fff;border:1px solid #ddd;border-radius:10px;padding:20px;margin:16px 0}
+.status-ok{color:#1a7f37;font-weight:600}.status-wait{color:#e67e00;font-weight:600}
+.badge{display:inline-block;padding:3px 10px;border-radius:20px;font-size:13px;font-weight:600}
+.badge-on{background:#e6f4ea;color:#1a7f37}.badge-off{background:#fce8e6;color:#c5221f}
+.num-row{display:flex;align-items:center;gap:12px;padding:8px 0;border-bottom:1px solid #f0f0f0}
+.num-row:last-child{border-bottom:none}
+.num{font-family:monospace;font-size:14px;flex:1}
+.btn{padding:6px 14px;border:none;border-radius:6px;cursor:pointer;font-size:13px;text-decoration:none;display:inline-block}
+.btn-green{background:#1a7f37;color:#fff}.btn-red{background:#c5221f;color:#fff}
+.btn-gray{background:#888;color:#fff}
+label{font-size:13px;color:#555;display:block;margin-bottom:6px}
+input[type=text]{padding:7px 10px;border:1px solid #ccc;border-radius:6px;font-size:14px;width:220px}
 </style></head>
 <body>
 <h1>🤖 Artistica WhatsApp AI Bot</h1>
+
 <div class="card">
-  <strong>Status:</strong>
-  <span class="${botStatus.includes('Connected') ? 'status-ok' : 'status-wait'}">${botStatus}</span>
+  <div style="display:flex;gap:24px;align-items:center;flex-wrap:wrap">
+    <div><strong>Connection:</strong>&nbsp;<span class="${botStatus.includes('Connected') ? 'status-ok' : 'status-wait'}">${botStatus}</span></div>
+    <div><strong>Bot replies:</strong>&nbsp;<span class="badge ${botEnabled ? 'badge-on' : 'badge-off'}">${botEnabled ? '✅ ON' : '🔴 OFF'}</span></div>
+  </div>
+  ${!botEnabled ? '<p style="color:#c5221f;margin:10px 0 0">Bot is paused. Send <code>!on</code> from the Artistica WhatsApp to resume.</p>' : ''}
 </div>
+
 ${qrDataUrl ? `
 <div class="card" style="border-color:#1a7f37;background:#e8f5e9">
   <h2 style="margin:0 0 12px">📱 Scan this QR code with WhatsApp</h2>
@@ -55,6 +73,34 @@ ${qrDataUrl ? `
     <li>Point camera at the QR code above</li>
   </ol>
 </div>` : ''}
+
+<div class="card">
+  <strong>Excluded numbers</strong> — bot stays silent for these (${excluded.length} total)
+  <p style="font-size:13px;color:#666;margin:6px 0 14px">Numbers are auto-excluded when the team replies manually. Re-enable to let the bot reply again.</p>
+  ${excluded.length === 0 ? '<p style="color:#888;font-size:14px">None — bot replies to everyone.</p>' : ''}
+  ${excluded.map(n => `
+  <div class="num-row">
+    <span class="num">+${n}</span>
+    <a href="/include?number=${encodeURIComponent(n)}" class="btn btn-green">Re-enable bot</a>
+  </div>`).join('')}
+  <div style="margin-top:16px;display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+    <div>
+      <label>Re-enable a number manually:</label>
+      <form method="get" action="/include" style="display:flex;gap:8px">
+        <input type="text" name="number" placeholder="628xxx (no + or spaces)">
+        <button type="submit" class="btn btn-green">Re-enable</button>
+      </form>
+    </div>
+    <div>
+      <label>Exclude a number manually:</label>
+      <form method="get" action="/exclude-num" style="display:flex;gap:8px">
+        <input type="text" name="number" placeholder="628xxx (no + or spaces)">
+        <button type="submit" class="btn btn-gray">Exclude</button>
+      </form>
+    </div>
+  </div>
+</div>
+
 <p style="color:#aaa;font-size:12px">Auto-refreshes every 10 seconds</p>
 </body></html>`);
 });
@@ -87,6 +133,26 @@ app.get('/check-number', async (req, res) => {
     } catch (err) {
         res.json({ error: err.message });
     }
+});
+
+// Re-enable bot for a number (remove from excluded)
+app.get('/include', (req, res) => {
+    const num = (req.query.number || '').replace(/[^0-9]/g, '');
+    if (!num) return res.redirect('/?msg=invalid');
+    excludedNumbers.delete(num);
+    saveExcluded(excludedNumbers);
+    console.log(`✅ Web: re-enabled bot for ${num}`);
+    res.redirect('/');
+});
+
+// Manually exclude a number via web
+app.get('/exclude-num', (req, res) => {
+    const num = (req.query.number || '').replace(/[^0-9]/g, '');
+    if (!num) return res.redirect('/?msg=invalid');
+    excludedNumbers.add(num);
+    saveExcluded(excludedNumbers);
+    console.log(`🚫 Web: excluded ${num}`);
+    res.redirect('/');
 });
 
 // Clear ALL session files (including creds.json) → requires fresh QR scan
