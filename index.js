@@ -28,6 +28,64 @@ function saveExcluded(set) {
 const excludedNumbers = loadExcluded();
 console.log(`Loaded ${excludedNumbers.size} excluded numbers`);
 
+// ── CRM ───────────────────────────────────────────────────────────────────────
+const CRM_FILE = './auth_session/crm_data.json';
+const CRM_PIN  = process.env.CRM_PIN || 'arts2026';
+
+function loadCRM() { try { return JSON.parse(fs.readFileSync(CRM_FILE,'utf8')); } catch(_){ return {}; } }
+function saveCRM()  { try { fs.writeFileSync(CRM_FILE, JSON.stringify(crmData)); } catch(_){} }
+let crmData = loadCRM();
+
+const STATUS_LABELS = { needs_cs:'Needs CS', urgent:'Urgent', follow_up:'Follow-up', active:'Active', new:'New', resolved:'Resolved' };
+const STATUS_COLORS = { needs_cs:'#d93025', urgent:'#e37400', follow_up:'#1a73e8', active:'#34a853', new:'#70757a', resolved:'#9aa0a6' };
+const STATUS_ORDER  = ['needs_cs','urgent','follow_up','active','new','resolved'];
+
+function timeAgo(iso) {
+    if (!iso) return '';
+    const m = Math.floor((Date.now() - new Date(iso).getTime()) / 60000);
+    if (m < 1) return 'just now';
+    if (m < 60) return `${m}m ago`;
+    const h = Math.floor(m / 60);
+    if (h < 24) return `${h}h ago`;
+    return `${Math.floor(h / 24)}d ago`;
+}
+
+function upsertCRM(phone, text, role) {
+    const now = new Date().toISOString();
+    if (!crmData[phone]) {
+        crmData[phone] = { phone, firstContact: now, lastMessage: '', lastMessageTime: now, status: 'new', notes: '', msgCount: 0, conv: [] };
+    }
+    const r = crmData[phone];
+    if (text) { r.lastMessage = text.substring(0, 150); r.lastMessageTime = now; }
+    if (role === 'customer') r.msgCount = (r.msgCount || 0) + 1;
+    if (text) r.conv = [...(r.conv || []), { role, text: text.substring(0, 300), time: now }].slice(-20);
+    if (role === 'customer' && text && !['needs_cs', 'resolved'].includes(r.status)) {
+        const lower = text.toLowerCase();
+        if (['urgent','segera','asap','darurat'].some(w => lower.includes(w))) r.status = 'urgent';
+        else if (r.status === 'new') r.status = 'active';
+    }
+    saveCRM();
+}
+
+function crmGuard(req, res) {
+    const pin = req.query.pin || req.query.t;
+    if (pin === CRM_PIN) return pin;
+    res.send(`<!DOCTYPE html><html><head><title>Artistica CRM</title>
+<meta name=viewport content="width=device-width,initial-scale=1">
+<style>*{box-sizing:border-box}body{font-family:sans-serif;display:flex;align-items:center;justify-content:center;min-height:100vh;margin:0;background:#1a73e8}
+.box{background:#fff;padding:36px 32px;border-radius:16px;box-shadow:0 4px 20px rgba(0,0,0,.15);text-align:center;width:300px}
+h2{margin:0 0 6px;color:#202124;font-size:20px}.sub{color:#5f6368;font-size:14px;margin-bottom:24px}
+input{padding:12px 14px;border:1px solid #ddd;border-radius:8px;font-size:16px;width:100%;margin-bottom:12px}
+button{padding:12px;background:#1a73e8;color:#fff;border:none;border-radius:8px;font-size:15px;font-weight:600;width:100%;cursor:pointer}
+button:hover{background:#1557b0}</style></head>
+<body><div class="box">
+<h2>🤖 Artistica CRM</h2>
+<p class="sub">Customer chat tracker</p>
+<form method=GET action="/crm"><input name=pin type=password placeholder="Enter PIN" autofocus><button>Login</button></form>
+</div></body></html>`);
+    return null;
+}
+
 // ── Express dashboard ──────────────────────────────────────────────────────────
 const app = express();
 
@@ -188,6 +246,163 @@ app.get('/clear-sessions', (req, res) => {
     } catch (err) {
         res.send('Error: ' + err.message);
     }
+});
+
+// ── CRM routes ────────────────────────────────────────────────────────────────
+app.get('/crm', (req, res) => {
+    const pin = crmGuard(req, res); if (!pin) return;
+    const filter = req.query.filter || 'open';
+
+    let list = Object.values(crmData);
+    if (filter === 'open')     list = list.filter(c => c.status !== 'resolved');
+    else if (filter !== 'all') list = list.filter(c => c.status === filter);
+
+    list.sort((a, b) => {
+        const sa = STATUS_ORDER.indexOf(a.status), sb = STATUS_ORDER.indexOf(b.status);
+        if (sa !== sb) return sa - sb;
+        return new Date(b.lastMessageTime) - new Date(a.lastMessageTime);
+    });
+
+    const tab = (label, f) => {
+        const active = filter === f;
+        return `<a href="/crm?pin=${pin}&filter=${f}" style="padding:7px 16px;border-radius:20px;text-decoration:none;font-size:13px;font-weight:600;white-space:nowrap;${active ? 'background:#1a73e8;color:#fff' : 'background:#f1f3f4;color:#5f6368'}">${label}</a>`;
+    };
+
+    const needsCs = Object.values(crmData).filter(c => c.status === 'needs_cs').length;
+    const urgent  = Object.values(crmData).filter(c => c.status === 'urgent').length;
+
+    const cards = list.map(c => {
+        const col = STATUS_COLORS[c.status] || '#70757a';
+        const lbl = STATUS_LABELS[c.status] || c.status;
+        return `<a href="/crm/detail?pin=${pin}&phone=${c.phone}" style="text-decoration:none;color:inherit;display:block">
+<div style="background:#fff;border-radius:10px;padding:14px 16px;margin-bottom:10px;border-left:4px solid ${col};box-shadow:0 1px 4px rgba(0,0,0,.08)">
+  <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:5px">
+    <span style="font-weight:600;font-size:15px">+${c.phone}</span>
+    <div style="display:flex;gap:8px;align-items:center">
+      <span style="font-size:12px;color:#9aa0a6">${timeAgo(c.lastMessageTime)}</span>
+      <span style="background:${col};color:#fff;padding:2px 10px;border-radius:12px;font-size:12px;font-weight:600">${lbl}</span>
+    </div>
+  </div>
+  <div style="font-size:13px;color:#5f6368;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${c.lastMessage || '(no text)'}</div>
+  ${c.notes ? `<div style="font-size:12px;color:#1a73e8;margin-top:5px">📝 ${c.notes.substring(0, 70)}</div>` : ''}
+</div></a>`;
+    }).join('');
+
+    res.send(`<!DOCTYPE html><html><head><title>Artistica CRM</title>
+<meta name=viewport content="width=device-width,initial-scale=1">
+<style>*{box-sizing:border-box}body{font-family:sans-serif;margin:0;background:#f1f3f4;min-height:100vh}
+.topbar{background:#1a73e8;color:#fff;padding:14px 16px;display:flex;justify-content:space-between;align-items:center;position:sticky;top:0;z-index:10}
+.topbar h1{margin:0;font-size:17px;font-weight:600}
+.alerts{display:flex;gap:8px}
+.alert{background:rgba(255,255,255,.2);border-radius:20px;padding:3px 10px;font-size:12px;font-weight:600}
+.content{max-width:720px;margin:0 auto;padding:16px}
+.tabs{display:flex;gap:8px;margin-bottom:14px;flex-wrap:wrap}
+.empty{text-align:center;color:#9aa0a6;padding:60px 20px;font-size:15px}
+</style></head>
+<body>
+<div class="topbar">
+  <h1>🤖 Artistica CRM</h1>
+  <div class="alerts">
+    ${needsCs > 0 ? `<span class="alert" style="background:#d93025">🆘 ${needsCs} CS</span>` : ''}
+    ${urgent  > 0 ? `<span class="alert" style="background:#e37400">⚡ ${urgent} Urgent</span>` : ''}
+    <span class="alert">${list.length} shown</span>
+  </div>
+</div>
+<div class="content">
+  <div class="tabs">
+    ${tab('Open', 'open')}
+    ${tab('🆘 Needs CS', 'needs_cs')}
+    ${tab('⚡ Urgent', 'urgent')}
+    ${tab('📌 Follow-up', 'follow_up')}
+    ${tab('All', 'all')}
+    ${tab('✅ Resolved', 'resolved')}
+  </div>
+  ${cards || '<div class="empty">Nothing here 🎉</div>'}
+</div>
+</body></html>`);
+});
+
+app.get('/crm/detail', (req, res) => {
+    const pin = crmGuard(req, res); if (!pin) return;
+    const { phone } = req.query;
+    const c = crmData[phone];
+    if (!c) return res.redirect(`/crm?pin=${pin}`);
+
+    const col = STATUS_COLORS[c.status] || '#70757a';
+    const lbl = STATUS_LABELS[c.status] || c.status;
+
+    const msgs = (c.conv || []).map(m => {
+        const isCust = m.role === 'customer';
+        return `<div style="display:flex;justify-content:${isCust ? 'flex-start' : 'flex-end'};margin-bottom:8px">
+<div style="max-width:82%;padding:9px 13px;border-radius:${isCust ? '4px 16px 16px 16px' : '16px 4px 16px 16px'};background:${isCust ? '#fff' : '#dcf8c6'};font-size:14px;line-height:1.4;box-shadow:0 1px 2px rgba(0,0,0,.08)">
+  ${m.text.replace(/\n/g,'<br>')}
+  <div style="font-size:11px;color:#9aa0a6;margin-top:4px;text-align:right">${isCust ? 'Customer' : 'Tica'} · ${timeAgo(m.time)}</div>
+</div></div>`;
+    }).join('');
+
+    const statusOpts = Object.keys(STATUS_LABELS).map(s =>
+        `<option value="${s}" ${s === c.status ? 'selected' : ''}>${STATUS_LABELS[s]}</option>`
+    ).join('');
+
+    res.send(`<!DOCTYPE html><html><head><title>+${phone}</title>
+<meta name=viewport content="width=device-width,initial-scale=1">
+<style>*{box-sizing:border-box}body{font-family:sans-serif;margin:0;background:#f1f3f4}
+.topbar{background:#1a73e8;color:#fff;padding:13px 16px;display:flex;align-items:center;gap:12px;position:sticky;top:0;z-index:10}
+.back{color:#fff;text-decoration:none;font-size:22px;line-height:1}
+.content{max-width:720px;margin:0 auto;padding:16px}
+.msgs{background:#e5ddd5;border-radius:10px;padding:12px;min-height:150px;max-height:380px;overflow-y:auto;margin-bottom:14px}
+.card{background:#fff;border-radius:10px;padding:16px;margin-bottom:12px;box-shadow:0 1px 3px rgba(0,0,0,.08)}
+.card strong{display:block;margin-bottom:10px;color:#202124}
+select,textarea{padding:10px 12px;border:1px solid #ddd;border-radius:8px;font-size:14px;width:100%;margin-bottom:10px;font-family:sans-serif}
+.btn{display:block;padding:11px;background:#1a73e8;color:#fff;border:none;border-radius:8px;font-size:14px;font-weight:600;width:100%;cursor:pointer;text-align:center;text-decoration:none}
+.btn:hover{background:#1557b0}
+.btn-green{background:#34a853}.btn-green:hover{background:#1e8e3e}
+</style></head>
+<body>
+<div class="topbar">
+  <a href="/crm?pin=${pin}" class="back">←</a>
+  <div style="flex:1">
+    <div style="font-weight:600;font-size:15px">+${phone}</div>
+    <div style="font-size:12px;opacity:.85">${c.msgCount || 0} messages · since ${timeAgo(c.firstContact)}</div>
+  </div>
+  <span style="background:${col};padding:4px 12px;border-radius:20px;font-size:12px;font-weight:600">${lbl}</span>
+</div>
+<div class="content">
+  <div class="msgs">${msgs || '<p style="text-align:center;color:#9aa0a6;margin:24px 0">No conversation recorded yet</p>'}</div>
+
+  <div class="card">
+    <strong>Status</strong>
+    <form method=GET action="/crm/set-status">
+      <input type=hidden name=pin value="${pin}"><input type=hidden name=phone value="${phone}">
+      <select name=status>${statusOpts}</select>
+      <button type=submit class="btn">Update Status</button>
+    </form>
+  </div>
+
+  <div class="card">
+    <strong>Notes</strong>
+    <form method=GET action="/crm/set-notes">
+      <input type=hidden name=pin value="${pin}"><input type=hidden name=phone value="${phone}">
+      <textarea name=notes rows=3 placeholder="Notes about this customer...">${c.notes || ''}</textarea>
+      <button type=submit class="btn btn-green">Save Notes</button>
+    </form>
+  </div>
+</div>
+</body></html>`);
+});
+
+app.get('/crm/set-status', (req, res) => {
+    const { pin, phone, status } = req.query;
+    if (pin !== CRM_PIN) return res.redirect('/crm');
+    if (crmData[phone] && STATUS_LABELS[status]) { crmData[phone].status = status; saveCRM(); }
+    res.redirect(`/crm/detail?pin=${pin}&phone=${phone}`);
+});
+
+app.get('/crm/set-notes', (req, res) => {
+    const { pin, phone, notes } = req.query;
+    if (pin !== CRM_PIN) return res.redirect('/crm');
+    if (crmData[phone]) { crmData[phone].notes = (notes || '').substring(0, 500); saveCRM(); }
+    res.redirect(`/crm/detail?pin=${pin}&phone=${phone}`);
 });
 
 app.listen(process.env.PORT || 3000, () =>
@@ -612,6 +827,7 @@ async function startBot() {
             }
 
             console.log(`📩 ${replyTo}: ${text}`);
+            upsertCRM(phoneNum, text, 'customer');
 
             try {
                 const { text: reply, handoff } = await getAIReply(replyTo, text);
@@ -631,12 +847,14 @@ async function startBot() {
                 console.log(`📤 sent to ${replyTo}, key: ${sent?.key?.id}, status: ${sent?.status}`);
                 if (sent?.key?.id) botSentIds.add(sent.key.id);
                 console.log(`🤖 Replied to ${replyTo}: ${reply.substring(0, 80)}...\n`);
+                upsertCRM(phoneNum, reply, 'tica');
 
                 // Human handoff — exclude number so bot stays silent and team takes over
                 if (handoff) {
                     const nums = [...new Set([phoneNum, fromNum])];
                     for (const n of nums) { excludedNumbers.add(n); }
                     saveExcluded(excludedNumbers);
+                    if (crmData[phoneNum]) { crmData[phoneNum].status = 'needs_cs'; saveCRM(); }
                     console.log(`🤝 Handoff: excluded ${nums.join('/')} — team takes over`);
                 }
             } catch (err) {
