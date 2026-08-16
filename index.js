@@ -322,6 +322,19 @@ If item is OUTSIDE SURABAYA:
 - Share contact page: artisticaindo.com/contact
 - DO NOT quote any price — always refer to Shilce for outside-Surabaya pricing
 
+## Conversation Closing — STOP asking questions
+When a customer says anything that signals they are done or satisfied — "terima kasih", "makasih", "thanks", "thank you", "thx", "ok thanks", "oke makasih", "oke", "ok", "noted", "sudah cukup", "sudah ya", "nanti saya kabari", "I'll get back to you", "will think about it", or similar — do NOT ask any follow-up question. Reply with a brief, warm closing ONLY.
+- Indonesian example: "Sama-sama! Jika ada pertanyaan lain, kami siap membantu 😊"
+- English example: "You're welcome! Feel free to reach out anytime 😊"
+This rule overrides the custom order information-collection steps. If the customer says thank you mid-conversation, close warmly and stop.
+
+## Human Handoff — always yield to human CS
+When a customer asks to speak with a real person, a human, or a CS agent — phrases like "mau ngobrol sama orang", "ada CS-nya?", "bisa bicara sama manusia?", "ada orangnya tidak?", "connect me to CS", "talk to human", "speak to agent", "can I talk to someone", "mau tanya langsung ke orangnya" — do the following:
+- Start your reply with exactly the text: [HANDOFF]
+- Then give a warm single-sentence handoff: "Tim kami akan segera menghubungi kamu ya! 😊" (Indonesian) or "A member of our team will reach out to you shortly! 😊" (English)
+- Do NOT ask any follow-up questions
+- Do NOT continue the conversation after this
+
 ## What you CANNOT answer — say "team will check and reply soon"
 Never guess on these — always say the team will follow up:
 - Order status / "is my order ready?" / "kapan pesanan saya jadi?"
@@ -367,9 +380,16 @@ async function getAIReply(contactId, text) {
         messages: conversations[contactId],
     });
 
-    const reply = response.content[0].text.trim();
+    let reply = response.content[0].text.trim();
+    let handoff = false;
+
+    if (reply.startsWith('[HANDOFF]')) {
+        handoff = true;
+        reply = reply.replace('[HANDOFF]', '').trim();
+    }
+
     conversations[contactId].push({ role: 'assistant', content: reply });
-    return reply;
+    return { text: reply, handoff };
 }
 
 
@@ -594,7 +614,7 @@ async function startBot() {
             console.log(`📩 ${replyTo}: ${text}`);
 
             try {
-                const reply = await getAIReply(replyTo, text);
+                const { text: reply, handoff } = await getAIReply(replyTo, text);
                 // Re-check exclusion after the async AI call — the team may have
                 // replied while we were waiting for the AI response.
                 if (excludedNumbers.has(phoneNum) || excludedNumbers.has(fromNum)) {
@@ -611,6 +631,14 @@ async function startBot() {
                 console.log(`📤 sent to ${replyTo}, key: ${sent?.key?.id}, status: ${sent?.status}`);
                 if (sent?.key?.id) botSentIds.add(sent.key.id);
                 console.log(`🤖 Replied to ${replyTo}: ${reply.substring(0, 80)}...\n`);
+
+                // Human handoff — exclude number so bot stays silent and team takes over
+                if (handoff) {
+                    const nums = [...new Set([phoneNum, fromNum])];
+                    for (const n of nums) { excludedNumbers.add(n); }
+                    saveExcluded(excludedNumbers);
+                    console.log(`🤝 Handoff: excluded ${nums.join('/')} — team takes over`);
+                }
             } catch (err) {
                 console.error('Error replying (with quote):', err.message);
                 // Fallback: send without quoted context
