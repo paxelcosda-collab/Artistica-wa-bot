@@ -560,10 +560,36 @@ async function startBot() {
                 msg.message?.conversation ||
                 msg.message?.extendedTextMessage?.text ||
                 msg.message?.imageMessage?.caption ||
+                msg.message?.videoMessage?.caption ||
+                msg.message?.documentMessage?.caption ||
                 ''
             ).trim();
 
-            if (!text) continue;
+            // Non-text message (voice note, sticker, image with no caption, etc.)
+            // Acknowledge so the customer knows someone is listening
+            if (!text) {
+                const isVoice = !!(msg.message?.audioMessage || msg.message?.pttMessage);
+                const isImage = !!(msg.message?.imageMessage);
+                const isVideo = !!(msg.message?.videoMessage);
+                let ackText = null;
+                if (isVoice) {
+                    ackText = 'Halo! Maaf, kami tidak bisa mendengarkan pesan suara secara otomatis 🙏 Bisa tulis pesannya ya? Kami siap membantu!\n\nHi! Sorry, we can\'t process voice messages automatically. Could you type your message? We\'re happy to help!';
+                } else if (isImage) {
+                    ackText = 'Halo! Terima kasih sudah mengirim gambar 😊 Bisa ceritakan apa yang Anda butuhkan? Misalnya, apakah ini referensi desain untuk order custom?\n\nHi! Thanks for the photo! Could you tell us what you need? For example, is this a design reference for a custom order?';
+                } else if (isVideo) {
+                    ackText = 'Halo! Terima kasih sudah mengirim video 😊 Bisa jelaskan apa yang Anda butuhkan?\n\nHi! Thanks for the video! Could you describe what you need?';
+                }
+                if (ackText) {
+                    try {
+                        const sent = await sock.sendMessage(replyTo, { text: ackText });
+                        if (sent?.key?.id) botSentIds.add(sent.key.id);
+                        console.log(`📤 non-text ack sent to ${replyTo}`);
+                    } catch (e) {
+                        console.error('Error sending non-text ack:', e.message);
+                    }
+                }
+                continue;
+            }
 
             console.log(`📩 ${replyTo}: ${text}`);
 
