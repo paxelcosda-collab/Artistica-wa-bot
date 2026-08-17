@@ -258,6 +258,27 @@ app.get('/exclude-num', (req, res) => {
     res.redirect('/');
 });
 
+// Debug: check exclusion status for a specific number
+app.get('/debug', (req, res) => {
+    const num = (req.query.number || '').replace(/[^0-9]/g, '');
+    const inPermanent = excludedNumbers.has(num);
+    const softExp = softExcluded.get(num);
+    const inSoft = !!softExp && Date.now() < softExp;
+    const softRemaining = inSoft ? Math.ceil((softExp - Date.now()) / 60000) + 'min' : 'n/a';
+    const allPermanent = [...excludedNumbers];
+    const similarPermanent = allPermanent.filter(n => n.includes(num.slice(-6)) || num.includes(n.slice(-6)));
+    res.json({
+        queried: num,
+        inPermanentExcluded: inPermanent,
+        inSoftExcluded: inSoft,
+        softRemainingTime: softRemaining,
+        botEnabled,
+        similarNumbersInPermanent: similarPermanent,
+        totalPermanentExcluded: excludedNumbers.size,
+        totalSoftExcluded: softExcluded.size,
+    });
+});
+
 // Clear ALL session files (including creds.json) → requires fresh QR scan
 app.get('/clear-all', (req, res) => {
     try {
