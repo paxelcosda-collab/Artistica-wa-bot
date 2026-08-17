@@ -827,7 +827,8 @@ async function startBot() {
 
             const from = msg.key.remoteJid;
             if (!from || from.endsWith('@g.us') || from === 'status@broadcast') continue;
-            const replyTo = (from.endsWith('@lid') && msg.key.senderPn) ? msg.key.senderPn : from;
+            if (from.endsWith('@lid') && !msg.key.senderPn) continue;
+            const replyTo = from.endsWith('@lid') ? msg.key.senderPn : from;
 
             // ── Admin commands from CS number ──────────────────────────────────
             {
