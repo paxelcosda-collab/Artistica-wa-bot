@@ -794,7 +794,7 @@ async function startBot() {
         // if the message arrived within the last 5 minutes — avoids replying to old history.
         if (type !== 'notify' && type !== 'append') return;
         if (type === 'append') {
-            const cutoff = Date.now() - 5 * 60 * 1000;
+            const cutoff = Date.now() - 15 * 60 * 1000;
             const recent = messages.some(m => {
                 const ts = (m.messageTimestamp?.low || m.messageTimestamp || 0) * 1000;
                 return ts > cutoff;
@@ -855,6 +855,19 @@ async function startBot() {
             // Skip excluded numbers — check both resolved phone and raw JID prefix
             const phoneNum = replyTo.split('@')[0];
             const fromNum = from.split('@')[0];
+
+            // Log ALL arrivals to CRM before exclusion check — for diagnostics
+            const rawText = (
+                msg.message?.conversation ||
+                msg.message?.extendedTextMessage?.text ||
+                msg.message?.imageMessage?.caption ||
+                msg.message?.videoMessage?.caption ||
+                msg.message?.documentMessage?.caption ||
+                '[media]'
+            ).trim();
+            upsertCRM(phoneNum, rawText, 'customer');
+            console.log(`📩 [${type}] from:${phoneNum} text:"${rawText.substring(0,40)}" excluded:${isExcluded(phoneNum,fromNum)}`);
+
             if (isExcluded(phoneNum, fromNum)) continue;
 
             const text = (
