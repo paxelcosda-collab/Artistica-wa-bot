@@ -25,8 +25,25 @@ function saveExcluded(set) {
     try { fs.writeFileSync(EXCLUDED_FILE, JSON.stringify([...set])); } catch (_) {}
 }
 
-const excludedNumbers = loadExcluded();
-console.log(`Loaded ${excludedNumbers.size} excluded numbers`);
+const excludedNumbers = loadExcluded(); // permanent only: !exclude command + handoffs
+console.log(`Loaded ${excludedNumbers.size} permanent excluded numbers`);
+
+// Soft excludes: auto-set when team replies manually, expire after 24h, never written to file
+const softExcluded = new Map(); // phone → expiry timestamp
+
+function softExclude(num) {
+    softExcluded.set(num, Date.now() + 24 * 60 * 60 * 1000);
+}
+function isSoftExcluded(num) {
+    const exp = softExcluded.get(num);
+    if (!exp) return false;
+    if (Date.now() > exp) { softExcluded.delete(num); return false; }
+    return true;
+}
+function isExcluded(phoneNum, fromNum) {
+    return excludedNumbers.has(phoneNum) || excludedNumbers.has(fromNum) ||
+           isSoftExcluded(phoneNum) || isSoftExcluded(fromNum);
+}
 
 // ── CRM ───────────────────────────────────────────────────────────────────────
 const CRM_FILE = './auth_session/crm_data.json';
@@ -133,26 +150,34 @@ ${qrDataUrl ? `
 </div>` : ''}
 
 <div class="card">
-  <strong>Excluded numbers</strong> — bot stays silent for these (${excluded.length} total)
-  <p style="font-size:13px;color:#666;margin:6px 0 14px">Numbers are auto-excluded when the team replies manually. Re-enable to let the bot reply again.</p>
-  ${excluded.length === 0 ? '<p style="color:#888;font-size:14px">None — bot replies to everyone.</p>' : ''}
+  <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px">
+    <strong>Permanently excluded (${excluded.length})</strong>
+    ${excluded.length > 0 ? `<a href="/clear-excluded" onclick="return confirm('Clear all ${excluded.length} excluded numbers? Tica will reply to all customers again.')" class="btn btn-red" style="font-size:12px;padding:5px 12px">🗑 Clear all</a>` : ''}
+  </div>
+  <p style="font-size:13px;color:#666;margin:6px 0 10px">These are permanent. New auto-excludes (team replies) now expire after 24h automatically.</p>
+  ${excluded.length > 0 ? `
+  <input type="text" id="search" placeholder="Search number..." oninput="filterNums(this.value)"
+    style="padding:7px 10px;border:1px solid #ccc;border-radius:6px;font-size:13px;width:100%;margin-bottom:10px;box-sizing:border-box">
+  <div id="numlist">
   ${excluded.map(n => `
-  <div class="num-row">
+  <div class="num-row" data-num="${n}">
     <span class="num">+${n}</span>
-    <a href="/include?number=${encodeURIComponent(n)}" class="btn btn-green">Re-enable bot</a>
+    <a href="/include?number=${encodeURIComponent(n)}" class="btn btn-green" style="font-size:12px;padding:5px 12px">Re-enable</a>
   </div>`).join('')}
-  <div style="margin-top:16px;display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+  </div>
+  <script>function filterNums(v){document.querySelectorAll('#numlist .num-row').forEach(r=>{r.style.display=r.dataset.num.includes(v.replace(/\\D/g,''))?'':'none'})}</script>` : '<p style="color:#888;font-size:14px">None — bot replies to everyone 🎉</p>'}
+  <div style="margin-top:14px;display:flex;gap:10px;flex-wrap:wrap">
     <div>
-      <label>Re-enable a number manually:</label>
+      <label>Re-enable a number:</label>
       <form method="get" action="/include" style="display:flex;gap:8px">
-        <input type="text" name="number" placeholder="628xxx (no + or spaces)">
+        <input type="text" name="number" placeholder="628xxx">
         <button type="submit" class="btn btn-green">Re-enable</button>
       </form>
     </div>
     <div>
-      <label>Exclude a number manually:</label>
+      <label>Permanently exclude:</label>
       <form method="get" action="/exclude-num" style="display:flex;gap:8px">
-        <input type="text" name="number" placeholder="628xxx (no + or spaces)">
+        <input type="text" name="number" placeholder="628xxx">
         <button type="submit" class="btn btn-gray">Exclude</button>
       </form>
     </div>
@@ -193,13 +218,24 @@ app.get('/check-number', async (req, res) => {
     }
 });
 
-// Re-enable bot for a number (remove from excluded)
+// Re-enable bot for a number (remove from both permanent and soft excluded)
 app.get('/include', (req, res) => {
     const num = (req.query.number || '').replace(/[^0-9]/g, '');
     if (!num) return res.redirect('/?msg=invalid');
     excludedNumbers.delete(num);
+    softExcluded.delete(num);
     saveExcluded(excludedNumbers);
     console.log(`✅ Web: re-enabled bot for ${num}`);
+    res.redirect('/');
+});
+
+// Clear ALL permanent excluded numbers so Tica replies to everyone again
+app.get('/clear-excluded', (req, res) => {
+    const count = excludedNumbers.size;
+    excludedNumbers.clear();
+    softExcluded.clear();
+    saveExcluded(excludedNumbers);
+    console.log(`🗑 Cleared all ${count} excluded numbers`);
     res.redirect('/');
 });
 
@@ -715,21 +751,11 @@ async function startBot() {
                 saveExcluded(excludedNumbers);
                 console.log(`Re-enabled bot for ${num}`);
             }
-            // Team manually replied → exclude. Store both the resolved phone AND the
-            // raw JID prefix so @lid vs @s.whatsapp.net mismatches are both covered.
+            // Team manually replied → soft-exclude for 24h (not permanent, not saved to file)
             if (text && !text.startsWith('!')) {
                 const nums = [...new Set([replyTo.split('@')[0], from.split('@')[0]])];
-                let saved = false;
-                for (const num of nums) {
-                    if (!excludedNumbers.has(num)) {
-                        excludedNumbers.add(num);
-                        saved = true;
-                    }
-                }
-                if (saved) {
-                    saveExcluded(excludedNumbers);
-                    console.log(`Auto-excluded ${nums.join('/')} (team replied manually)`);
-                }
+                for (const num of nums) softExclude(num);
+                console.log(`Soft-excluded ${nums.join('/')} for 24h (team replied manually)`);
             }
         }
 
@@ -799,7 +825,7 @@ async function startBot() {
             // Skip excluded numbers — check both resolved phone and raw JID prefix
             const phoneNum = replyTo.split('@')[0];
             const fromNum = from.split('@')[0];
-            if (excludedNumbers.has(phoneNum) || excludedNumbers.has(fromNum)) continue;
+            if (isExcluded(phoneNum, fromNum)) continue;
 
             const text = (
                 msg.message?.conversation ||
@@ -843,7 +869,7 @@ async function startBot() {
                 const { text: reply, handoff } = await getAIReply(replyTo, text);
                 // Re-check exclusion after the async AI call — the team may have
                 // replied while we were waiting for the AI response.
-                if (excludedNumbers.has(phoneNum) || excludedNumbers.has(fromNum)) {
+                if (isExcluded(phoneNum, fromNum)) {
                     console.log(`⚠️ ${phoneNum} excluded while generating reply — discarding`);
                     continue;
                 }
@@ -859,13 +885,13 @@ async function startBot() {
                 console.log(`🤖 Replied to ${replyTo}: ${reply.substring(0, 80)}...\n`);
                 upsertCRM(phoneNum, reply, 'tica');
 
-                // Human handoff — exclude number so bot stays silent and team takes over
+                // Human handoff — permanently exclude so bot stays silent until team re-enables
                 if (handoff) {
                     const nums = [...new Set([phoneNum, fromNum])];
-                    for (const n of nums) { excludedNumbers.add(n); }
+                    for (const n of nums) { excludedNumbers.add(n); softExcluded.delete(n); }
                     saveExcluded(excludedNumbers);
                     if (crmData[phoneNum]) { crmData[phoneNum].status = 'needs_cs'; saveCRM(); }
-                    console.log(`🤝 Handoff: excluded ${nums.join('/')} — team takes over`);
+                    console.log(`🤝 Handoff: permanently excluded ${nums.join('/')} — team takes over`);
                 }
             } catch (err) {
                 console.error('Error replying (with quote):', err.message);
