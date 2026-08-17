@@ -733,8 +733,18 @@ async function startBot() {
             }
         }
 
-        // PASS 2: handle incoming customer messages. Only process real-time events.
-        if (type !== 'notify') return;
+        // PASS 2: handle incoming customer messages.
+        // Process 'notify' (real-time) and 'append' (missed during restart) but only
+        // if the message arrived within the last 5 minutes — avoids replying to old history.
+        if (type !== 'notify' && type !== 'append') return;
+        if (type === 'append') {
+            const cutoff = Date.now() - 5 * 60 * 1000;
+            const recent = messages.some(m => {
+                const ts = (m.messageTimestamp?.low || m.messageTimestamp || 0) * 1000;
+                return ts > cutoff;
+            });
+            if (!recent) return;
+        }
 
         for (const msg of messages) {
             if (!msg.message || msg.key.fromMe) continue;
