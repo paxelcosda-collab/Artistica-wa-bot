@@ -110,7 +110,16 @@ app.get('/', (req, res) => {
     const excluded = [...excludedNumbers];
     res.send(`<!DOCTYPE html>
 <html><head><title>Artistica Bot</title>
-<meta http-equiv="refresh" content="10">
+<script>
+var _rt; function _resetTimer(){clearTimeout(_rt);_rt=setTimeout(()=>location.reload(),10000);}
+document.addEventListener('DOMContentLoaded',()=>{
+  _resetTimer();
+  document.querySelectorAll('input,textarea,select').forEach(el=>{
+    el.addEventListener('focus',()=>clearTimeout(_rt));
+    el.addEventListener('blur',()=>_resetTimer());
+  });
+});
+</script>
 <style>
 body{font-family:sans-serif;padding:40px;max-width:680px;margin:auto;background:#f5f5f5}
 h1{margin-bottom:8px}
