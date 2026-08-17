@@ -14,6 +14,7 @@ let botEnabled = true;
 const conversations = {};
 const botSentIds = new Set();
 const processedMsgIds = new Set(); // dedup: Baileys can fire messages.upsert twice for the same message
+const recentEvents = []; // stores raw upsert events for /recent-events diagnostic
 
 // ── Excluded numbers (team manually replied → bot stays silent) ────────────────
 const EXCLUDED_FILE = './auth_session/excluded.json';
@@ -277,6 +278,10 @@ app.get('/debug', (req, res) => {
         totalPermanentExcluded: excludedNumbers.size,
         totalSoftExcluded: softExcluded.size,
     });
+});
+
+app.get('/recent-events', (req, res) => {
+    res.json({ count: recentEvents.length, events: [...recentEvents].reverse() });
 });
 
 // Clear ALL session files (including creds.json) → requires fresh QR scan
@@ -752,6 +757,12 @@ async function startBot() {
     });
 
     sock.ev.on('messages.upsert', async ({ messages, type }) => {
+        // Store raw event for diagnostics (/recent-events endpoint)
+        const evEntry = { time: new Date().toISOString(), type, msgs: messages.map(m => ({ jid: m.key.remoteJid, fromMe: m.key.fromMe, hasMsg: !!m.message, id: m.key.id?.substring(0, 8), text: (m.message?.conversation || m.message?.extendedTextMessage?.text || '').substring(0, 40) })) };
+        recentEvents.push(evEntry);
+        if (recentEvents.length > 30) recentEvents.shift();
+        console.log(`🔔 upsert type=${type} count=${messages.length}:`, messages.map(m => `${m.key.remoteJid}(fromMe=${m.key.fromMe})`).join(', '));
+
         // PASS 1: process all outgoing (fromMe) messages first so exclusions are
         // applied before we handle any incoming messages in the same batch.
         // This prevents the race where a customer message and a team reply arrive
