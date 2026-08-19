@@ -29,16 +29,39 @@ function saveExcluded(set) {
 const excludedNumbers = loadExcluded(); // permanent only: !exclude command + handoffs
 console.log(`Loaded ${excludedNumbers.size} permanent excluded numbers`);
 
-// Soft excludes: auto-set when team replies manually, expire after 24h, never written to file
-const softExcluded = new Map(); // phone → expiry timestamp
+// Soft excludes: auto-set when team replies manually, expire after 24h, saved to file so restarts don't clear them
+const SOFT_EXCLUDED_FILE = './auth_session/soft_excluded.json';
+
+function loadSoftExcluded() {
+    try {
+        const raw = JSON.parse(fs.readFileSync(SOFT_EXCLUDED_FILE, 'utf8'));
+        const now = Date.now();
+        const map = new Map();
+        for (const [num, exp] of Object.entries(raw)) {
+            if (exp > now) map.set(num, exp);
+        }
+        return map;
+    } catch (_) { return new Map(); }
+}
+function saveSoftExcluded() {
+    try {
+        const obj = {};
+        for (const [num, exp] of softExcluded) obj[num] = exp;
+        fs.writeFileSync(SOFT_EXCLUDED_FILE, JSON.stringify(obj));
+    } catch (_) {}
+}
+
+const softExcluded = loadSoftExcluded();
+console.log(`Loaded ${softExcluded.size} active soft-excluded numbers`);
 
 function softExclude(num) {
     softExcluded.set(num, Date.now() + 24 * 60 * 60 * 1000);
+    saveSoftExcluded();
 }
 function isSoftExcluded(num) {
     const exp = softExcluded.get(num);
     if (!exp) return false;
-    if (Date.now() > exp) { softExcluded.delete(num); return false; }
+    if (Date.now() > exp) { softExcluded.delete(num); saveSoftExcluded(); return false; }
     return true;
 }
 function isExcluded(phoneNum, fromNum) {
@@ -235,6 +258,7 @@ app.get('/include', (req, res) => {
     excludedNumbers.delete(num);
     softExcluded.delete(num);
     saveExcluded(excludedNumbers);
+    saveSoftExcluded();
     console.log(`✅ Web: re-enabled bot for ${num}`);
     res.redirect('/');
 });
@@ -245,6 +269,7 @@ app.get('/clear-excluded', (req, res) => {
     excludedNumbers.clear();
     softExcluded.clear();
     saveExcluded(excludedNumbers);
+    saveSoftExcluded();
     console.log(`🗑 Cleared all ${count} excluded numbers`);
     res.redirect('/');
 });
