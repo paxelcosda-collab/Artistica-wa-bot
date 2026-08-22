@@ -4,9 +4,27 @@ const { default: makeWASocket, useMultiFileAuthState, DisconnectReason, fetchLat
 const Anthropic = require('@anthropic-ai/sdk');
 const QRCode = require('qrcode');
 const pino = require('pino');
+const { Writable } = require('stream');
 
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 const fs = require('fs');
+
+// Intercept Baileys logger output so we can detect the zombie-state error
+// ("unexpected error in 'init queries': Timed Out") and restart automatically.
+let restartScheduled = false;
+const baileysLogStream = new Writable({
+    write(chunk, encoding, callback) {
+        const line = chunk.toString();
+        process.stdout.write(line);
+        if (!restartScheduled && line.includes('init queries') &&
+            (line.includes('Timed Out') || line.includes('408'))) {
+            restartScheduled = true;
+            console.error('[BOT] Zombie state detected (init queries timeout) — restarting in 10s...');
+            setTimeout(() => process.exit(1), 10000);
+        }
+        callback();
+    },
+});
 
 let botStatus = 'Starting...';
 let qrDataUrl = null;
@@ -309,12 +327,20 @@ app.get('/recent-events', (req, res) => {
     res.json({ count: recentEvents.length, events: [...recentEvents].reverse() });
 });
 
+// Restart the bot process (Railway will restart the container)
+app.get('/restart', (req, res) => {
+    res.send('Restarting bot in 2 seconds...');
+    setTimeout(() => process.exit(1), 2000);
+});
+
 // Clear ALL session files (including creds.json) → requires fresh QR scan
+// Preserves: excluded.json (permanent excludes), crm_data.json (customer data)
 app.get('/clear-all', (req, res) => {
     try {
+        const KEEP = new Set(['excluded.json', 'crm_data.json']);
         const cleared = [];
         for (const f of fs.readdirSync('./auth_session')) {
-            if (f !== 'excluded.json') {
+            if (!KEEP.has(f)) {
                 fs.rmSync(`./auth_session/${f}`, { force: true, recursive: true });
                 cleared.push(f);
             }
@@ -327,11 +353,13 @@ app.get('/clear-all', (req, res) => {
 });
 
 // Clear only signal session files (NOT pre-keys or app-state-sync), then restart
+// Preserves: creds.json, excluded.json, crm_data.json, soft_excluded.json, pre-key-*, app-state-sync*
 app.get('/clear-sessions', (req, res) => {
     try {
         const cleared = [];
         for (const f of fs.readdirSync('./auth_session')) {
             if (f !== 'creds.json' && f !== 'excluded.json' &&
+                f !== 'crm_data.json' && f !== 'soft_excluded.json' &&
                 !f.startsWith('pre-key-') && !f.startsWith('app-state-sync')) {
                 fs.rmSync(`./auth_session/${f}`, { force: true, recursive: true });
                 cleared.push(f);
@@ -712,6 +740,7 @@ async function getAIReply(contactId, text) {
 
 // ── WhatsApp bot (Baileys — no browser, low memory) ───────────────────────────
 async function startBot() {
+    restartScheduled = false;
     const { state, saveCreds } = await useMultiFileAuthState('./auth_session');
 
     let version;
@@ -728,7 +757,7 @@ async function startBot() {
         version,
         auth: state,
         printQRInTerminal: false,
-        logger: pino({ level: 'info' }),
+        logger: pino({ level: 'info' }, baileysLogStream),
         browser: Browsers.ubuntu('Chrome'),
         generateHighQualityLinkPreview: false,
         syncFullHistory: false,
