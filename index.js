@@ -12,6 +12,7 @@ const fs = require('fs');
 // Intercept Baileys logger output so we can detect the zombie-state error
 // ("unexpected error in 'init queries': Timed Out") and restart automatically.
 let restartScheduled = false;
+let botStartTime = Date.now();
 const baileysLogStream = new Writable({
     write(chunk, encoding, callback) {
         const line = chunk.toString();
@@ -19,14 +20,21 @@ const baileysLogStream = new Writable({
         if (!restartScheduled && line.includes('init queries') &&
             (line.includes('Timed Out') || line.includes('408'))) {
             restartScheduled = true;
-            console.error('[BOT] Zombie state detected — clearing auth session and restarting...');
-            const KEEP = new Set(['excluded.json', 'crm_data.json', 'soft_excluded.json']);
-            try {
-                const files = fs.readdirSync('./auth_session');
-                for (const f of files) {
-                    if (!KEEP.has(f)) { fs.unlinkSync(`./auth_session/${f}`); console.log(`[BOT] Cleared ${f}`); }
-                }
-            } catch (e) { console.error('[BOT] Clear error:', e.message); }
+            const aliveMs = Date.now() - botStartTime;
+            if (aliveMs < 60000) {
+                // Failed at startup — auth is probably stale, clear it so next boot shows QR
+                console.error('[BOT] Zombie at startup — clearing auth and restarting...');
+                const KEEP = new Set(['excluded.json', 'crm_data.json', 'soft_excluded.json']);
+                try {
+                    const files = fs.readdirSync('./auth_session');
+                    for (const f of files) {
+                        if (!KEEP.has(f)) { fs.unlinkSync(`./auth_session/${f}`); console.log(`[BOT] Cleared ${f}`); }
+                    }
+                } catch (e) { console.error('[BOT] Clear error:', e.message); }
+            } else {
+                // Mid-session timeout — transient issue, keep auth and just restart
+                console.error(`[BOT] Zombie after ${Math.round(aliveMs/1000)}s — restarting without clearing auth...`);
+            }
             setTimeout(() => process.exit(1), 3000);
         }
         callback();
@@ -748,6 +756,7 @@ async function getAIReply(contactId, text) {
 // ── WhatsApp bot (Baileys — no browser, low memory) ───────────────────────────
 async function startBot() {
     restartScheduled = false;
+    botStartTime = Date.now();
     const { state, saveCreds } = await useMultiFileAuthState('./auth_session');
 
     let version;
