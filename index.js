@@ -13,6 +13,17 @@ const fs = require('fs');
 // ("unexpected error in 'init queries': Timed Out") and restart automatically.
 let restartScheduled = false;
 let botStartTime = Date.now();
+
+const SESSION_KEEP = new Set(['excluded.json', 'crm_data.json', 'soft_excluded.json']);
+function clearAuthSession() {
+    try {
+        const files = fs.readdirSync('./auth_session');
+        for (const f of files) {
+            if (!SESSION_KEEP.has(f)) { fs.unlinkSync(`./auth_session/${f}`); console.log(`[BOT] Cleared ${f}`); }
+        }
+    } catch (e) { console.error('[BOT] Clear error:', e.message); }
+}
+
 const baileysLogStream = new Writable({
     write(chunk, encoding, callback) {
         const line = chunk.toString();
@@ -22,20 +33,14 @@ const baileysLogStream = new Writable({
             restartScheduled = true;
             const aliveMs = Date.now() - botStartTime;
             if (aliveMs < 60000) {
-                // Failed at startup — auth is probably stale, clear it so next boot shows QR
-                console.error('[BOT] Zombie at startup — clearing auth and restarting...');
-                const KEEP = new Set(['excluded.json', 'crm_data.json', 'soft_excluded.json']);
-                try {
-                    const files = fs.readdirSync('./auth_session');
-                    for (const f of files) {
-                        if (!KEEP.has(f)) { fs.unlinkSync(`./auth_session/${f}`); console.log(`[BOT] Cleared ${f}`); }
-                    }
-                } catch (e) { console.error('[BOT] Clear error:', e.message); }
+                console.error('[BOT] Zombie at startup — clearing auth so next reconnect shows QR...');
+                clearAuthSession();
             } else {
-                // Mid-session timeout — transient issue, keep auth and just restart
-                console.error(`[BOT] Zombie after ${Math.round(aliveMs/1000)}s — restarting without clearing auth...`);
+                console.error(`[BOT] Zombie after ${Math.round(aliveMs/1000)}s — closing socket for reconnect...`);
             }
-            setTimeout(() => process.exit(1), 3000);
+            // Close socket: triggers connection.update → startBot() after 10s, no process.exit
+            try { if (sockRef) sockRef.end(new Error('zombie-reconnect')); }
+            catch (e) { console.error('[BOT] Socket close error:', e.message); }
         }
         callback();
     },
@@ -814,14 +819,9 @@ async function startBot() {
             qrDataUrl = null;
 
             if (loggedOut) {
-                console.log('Logged out — clearing session files for fresh QR...');
-                try {
-                    for (const f of fs.readdirSync('./auth_session')) {
-                        if (f !== 'excluded.json')
-                            fs.rmSync(`./auth_session/${f}`, { recursive: true, force: true });
-                    }
-                } catch (_) {}
-                setTimeout(() => process.exit(1), 1000);
+                console.log('Logged out — clearing session files and reconnecting...');
+                clearAuthSession();
+                setTimeout(startBot, 3000);
             } else {
                 setTimeout(startBot, 10000);
             }
