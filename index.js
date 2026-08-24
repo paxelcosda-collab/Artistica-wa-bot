@@ -19,8 +19,15 @@ const baileysLogStream = new Writable({
         if (!restartScheduled && line.includes('init queries') &&
             (line.includes('Timed Out') || line.includes('408'))) {
             restartScheduled = true;
-            console.error('[BOT] Zombie state detected (init queries timeout) — restarting in 10s...');
-            setTimeout(() => process.exit(1), 10000);
+            console.error('[BOT] Zombie state detected — clearing auth session and restarting...');
+            const KEEP = new Set(['excluded.json', 'crm_data.json', 'soft_excluded.json']);
+            try {
+                const files = fs.readdirSync('./auth_session');
+                for (const f of files) {
+                    if (!KEEP.has(f)) { fs.unlinkSync(`./auth_session/${f}`); console.log(`[BOT] Cleared ${f}`); }
+                }
+            } catch (e) { console.error('[BOT] Clear error:', e.message); }
+            setTimeout(() => process.exit(1), 3000);
         }
         callback();
     },
