@@ -847,7 +847,8 @@ async function startBot() {
             if (!msg.message || !msg.key.fromMe) continue;
             const from = msg.key.remoteJid;
             if (!from || from.endsWith('@g.us') || from === 'status@broadcast') continue;
-            const replyTo = (from.endsWith('@lid') && msg.key.senderPn) ? msg.key.senderPn : from;
+            const _pn850 = msg.key.senderPn;
+            const replyTo = (from.endsWith('@lid') && _pn850) ? (_pn850.includes('@') ? _pn850 : _pn850 + '@s.whatsapp.net') : from;
 
             if (botSentIds.has(msg.key.id)) {
                 botSentIds.delete(msg.key.id);
@@ -904,7 +905,8 @@ async function startBot() {
             const from = msg.key.remoteJid;
             if (!from || from.endsWith('@g.us') || from === 'status@broadcast') continue;
             if (from.endsWith('@lid') && !msg.key.senderPn) continue;
-            const replyTo = from.endsWith('@lid') ? msg.key.senderPn : from;
+            const _pn = msg.key.senderPn;
+            const replyTo = from.endsWith('@lid') ? (_pn && _pn.includes('@') ? _pn : (_pn || from) + '@s.whatsapp.net') : from;
 
             // ── Admin commands from CS number ──────────────────────────────────
             {
