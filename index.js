@@ -870,10 +870,11 @@ async function startBot() {
                 console.log(`Re-enabled bot for ${num}`);
             }
             // Team manually replied → soft-exclude for 24h (not permanent, not saved to file)
+            // Only use the resolved phone number (replyTo prefix), never the raw @lid prefix.
             if (text && !text.startsWith('!')) {
-                const nums = [...new Set([replyTo.split('@')[0], from.split('@')[0]])];
-                for (const num of nums) softExclude(num);
-                console.log(`Soft-excluded ${nums.join('/')} for 24h (team replied manually)`);
+                const num = replyTo.split('@')[0];
+                softExclude(num);
+                console.log(`Soft-excluded ${num} for 24h (team replied manually)`);
             }
         }
 
@@ -949,9 +950,9 @@ async function startBot() {
 
             if (!botEnabled) continue;
 
-            // Skip excluded numbers — check both resolved phone and raw JID prefix
+            // Skip excluded numbers — use resolved phone number only; never use raw @lid prefix as check key
             const phoneNum = replyTo.split('@')[0];
-            const fromNum = from.split('@')[0];
+            const fromNum = from.endsWith('@lid') ? phoneNum : from.split('@')[0];
 
             // Log ALL arrivals to CRM before exclusion check — for diagnostics
             const rawText = (
