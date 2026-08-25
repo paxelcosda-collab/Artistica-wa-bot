@@ -570,7 +570,7 @@ const SYSTEM_PROMPT = `Your name is Tica. You are the customer service assistant
 ## Products & Services
 - Ready-made wholesale jewelry: rings, necklaces, bracelets, earrings, pendants, brooches
 - Custom OEM/ODM: client provides design → CAD → wax prototype → casting → finishing
-- Private label: unbranded jewelry with client's packaging/tags
+- Private label: unbranded jewelry with client's logo stamp or engraving on the jewelry itself
 - Jewelry making class: hands-on silversmithing (individuals, groups, corporate)
 - Laser engraving: logo, monogram, text on jewelry, leather (synthetic or real), and plastic
 
