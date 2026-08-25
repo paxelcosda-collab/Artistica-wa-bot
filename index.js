@@ -905,16 +905,9 @@ async function startBot() {
 
             const from = msg.key.remoteJid;
             if (!from || from.endsWith('@g.us') || from === 'status@broadcast') continue;
-            if (from.endsWith('@lid')) {
-                console.log(`[LID] msg from @lid: senderPn=${msg.key.senderPn} participant=${msg.key.participant} lid=${from}`);
-            }
-            if (from.endsWith('@lid') && !msg.key.senderPn) {
-                console.log(`[LID] no senderPn for ${from} — skipping`);
-                continue;
-            }
+            if (from.endsWith('@lid') && !msg.key.senderPn) continue;
             const _pn = msg.key.senderPn;
             const replyTo = from.endsWith('@lid') ? (_pn && _pn.includes('@') ? _pn : (_pn || from) + '@s.whatsapp.net') : from;
-            if (from.endsWith('@lid')) console.log(`[LID] replyTo resolved: ${replyTo}`);
 
             // ── Admin commands from CS number ──────────────────────────────────
             {
