@@ -225,7 +225,7 @@ ${qrDataUrl ? `
     <strong>Permanently excluded (${excluded.length})</strong>
     ${excluded.length > 0 ? `<a href="/clear-excluded" onclick="return confirm('Clear all ${excluded.length} excluded numbers? Tica will reply to all customers again.')" class="btn btn-red" style="font-size:12px;padding:5px 12px">🗑 Clear all</a>` : ''}
   </div>
-  <p style="font-size:13px;color:#666;margin:6px 0 10px">These are permanent. New auto-excludes (team replies) now expire after 24h automatically.</p>
+  <p style="font-size:13px;color:#666;margin:6px 0 10px">These are permanent. Bot stays silent until you re-enable the number here or send <code>!include NUMBER</code> from the Artistica phone.</p>
   ${excluded.length > 0 ? `
   <input type="text" id="search" placeholder="Search number..." oninput="filterNums(this.value)"
     style="padding:7px 10px;border:1px solid #ccc;border-radius:6px;font-size:13px;width:100%;margin-bottom:10px;box-sizing:border-box">
@@ -869,12 +869,14 @@ async function startBot() {
                 saveExcluded(excludedNumbers);
                 console.log(`Re-enabled bot for ${num}`);
             }
-            // Team manually replied → soft-exclude for 24h (not permanent, not saved to file)
+            // Team manually replied → permanently exclude so bot stays silent until re-enabled via dashboard or !include
             // Only use the resolved phone number (replyTo prefix), never the raw @lid prefix.
             if (text && !text.startsWith('!')) {
                 const num = replyTo.split('@')[0];
-                softExclude(num);
-                console.log(`Soft-excluded ${num} for 24h (team replied manually)`);
+                excludedNumbers.add(num);
+                softExcluded.delete(num);
+                saveExcluded(excludedNumbers);
+                console.log(`Permanently excluded ${num} — team replied manually`);
             }
         }
 
