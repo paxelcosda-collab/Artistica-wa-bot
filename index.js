@@ -15,21 +15,18 @@ const DJANGO_FORWARD_KEY = process.env.WA_BOT_KEY || 'arts2026';
 
 function forwardToDjango(payload) {
     try {
-        const body = JSON.stringify(payload);
+        const params = new URLSearchParams({
+            key: DJANGO_FORWARD_KEY,
+            phone: payload.phone || '',
+            text: (payload.text || '').substring(0, 2000),
+            direction: payload.direction || 'in',
+            is_ai: payload.is_ai ? '1' : '0',
+        });
         const url = new URL(DJANGO_FORWARD_URL);
+        url.search = params.toString();
         const proto = url.protocol === 'https:' ? https : require('http');
-        const req = proto.request({
-            hostname: url.hostname,
-            path: url.pathname,
-            method: 'POST',
-            headers: {
-                'Content-Type': 'application/json',
-                'Content-Length': Buffer.byteLength(body),
-                'X-Forward-Key': DJANGO_FORWARD_KEY,
-            },
-        }, r => { r.resume(); });
+        const req = proto.request({ hostname: url.hostname, path: url.pathname + url.search, method: 'GET' }, r => { r.resume(); });
         req.on('error', e => console.warn('[Django] forward error:', e.message));
-        req.write(body);
         req.end();
     } catch (e) {
         console.warn('[Django] forward exception:', e.message);
