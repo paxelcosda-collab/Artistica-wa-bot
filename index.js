@@ -25,7 +25,7 @@ function forwardToDjango(payload) {
         const url = new URL(DJANGO_FORWARD_URL);
         url.search = params.toString();
         const proto = url.protocol === 'https:' ? https : require('http');
-        const req = proto.request({ hostname: url.hostname, path: url.pathname + url.search, method: 'GET' }, r => { r.resume(); });
+        const req = proto.request({ hostname: url.hostname, path: url.pathname + url.search, method: 'GET', headers: { 'User-Agent': 'Mozilla/5.0 (compatible; ArtisticaBot/1.0)' } }, r => { r.resume(); });
         req.on('error', e => console.warn('[Django] forward error:', e.message));
         req.end();
     } catch (e) {
