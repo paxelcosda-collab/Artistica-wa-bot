@@ -1012,6 +1012,15 @@ async function startBot() {
                     console.log(`⚠️ ${phoneNum} excluded while generating reply — discarding`);
                     continue;
                 }
+                // Hold 5 seconds before sending — gives WhatsApp multi-device sync time
+                // to deliver any manual human reply that happened while AI was generating.
+                // A human reply arriving during this window will add the number to
+                // excludedNumbers, and the re-check below will discard the bot reply.
+                await new Promise(r => setTimeout(r, 5000));
+                if (isExcluded(phoneNum, fromNum)) {
+                    console.log(`⚠️ ${phoneNum} excluded during pre-send hold — discarding bot reply`);
+                    continue;
+                }
                 // Always send to @s.whatsapp.net (replyTo).
                 // If the message arrived via @lid, remap the quoted key's remoteJid to @s.whatsapp.net
                 // so the quoted context doesn't carry an @lid JID (which causes error 463).
