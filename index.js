@@ -8,6 +8,33 @@ const { Writable } = require('stream');
 
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 const fs = require('fs');
+const https = require('https');
+
+const DJANGO_FORWARD_URL = process.env.DJANGO_WA_FORWARD_URL || 'https://artisticaindo.com/api/wa-forward/';
+const DJANGO_FORWARD_KEY = process.env.WA_BOT_KEY || 'arts2026';
+
+function forwardToDjango(payload) {
+    try {
+        const body = JSON.stringify(payload);
+        const url = new URL(DJANGO_FORWARD_URL);
+        const proto = url.protocol === 'https:' ? https : require('http');
+        const req = proto.request({
+            hostname: url.hostname,
+            path: url.pathname,
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'Content-Length': Buffer.byteLength(body),
+                'X-Forward-Key': DJANGO_FORWARD_KEY,
+            },
+        }, r => { r.resume(); });
+        req.on('error', e => console.warn('[Django] forward error:', e.message));
+        req.write(body);
+        req.end();
+    } catch (e) {
+        console.warn('[Django] forward exception:', e.message);
+    }
+}
 
 // Intercept Baileys logger output so we can detect the zombie-state error
 // ("unexpected error in 'init queries': Timed Out") and restart automatically.
@@ -981,6 +1008,7 @@ async function startBot() {
                 '[media]'
             ).trim();
             upsertCRM(phoneNum, rawText, 'customer');
+            forwardToDjango({ phone: phoneNum, text: rawText, direction: 'in' });
             console.log(`📩 [${type}] from:${phoneNum} text:"${rawText.substring(0,40)}" excluded:${isExcluded(phoneNum,fromNum)}`);
 
             if (isExcluded(phoneNum, fromNum)) continue;
@@ -1051,6 +1079,7 @@ async function startBot() {
                 if (sent?.key?.id) botSentIds.add(sent.key.id);
                 console.log(`🤖 Replied to ${replyTo}: ${reply.substring(0, 80)}...\n`);
                 upsertCRM(phoneNum, reply, 'tica');
+                forwardToDjango({ phone: phoneNum, text: reply, direction: 'out', is_ai: true });
 
                 // Human handoff — permanently exclude so bot stays silent until team re-enables
                 if (handoff) {
