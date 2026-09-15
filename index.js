@@ -50,6 +50,7 @@ let botStatus = 'Starting...';
 let qrDataUrl = null;
 let botEnabled = true;
 const conversations = {};
+let lastActivityTime = Date.now(); // updated on every WA event; used by zombie watchdog
 const botSentIds = new Set();
 const processedMsgIds = new Set(); // dedup: Baileys can fire messages.upsert twice for the same message
 const recentEvents = []; // stores raw upsert events for /recent-events diagnostic
@@ -784,6 +785,7 @@ async function startBot() {
         syncFullHistory: false,
         defaultQueryTimeoutMs: 300000,
         connectTimeoutMs: 60000,
+        keepAliveIntervalMs: 25000,
     });
 
     sockRef = sock;
@@ -833,6 +835,7 @@ async function startBot() {
     });
 
     sock.ev.on('messages.upsert', async ({ messages, type }) => {
+        lastActivityTime = Date.now(); // any WA event resets zombie clock
         // Store raw event for diagnostics (/recent-events endpoint)
         const evEntry = { time: new Date().toISOString(), type, msgs: messages.map(m => ({ jid: m.key.remoteJid, fromMe: m.key.fromMe, hasMsg: !!m.message, id: m.key.id?.substring(0, 8), text: (m.message?.conversation || m.message?.extendedTextMessage?.text || '').substring(0, 40) })) };
         recentEvents.push(evEntry);
@@ -1044,6 +1047,50 @@ async function startBot() {
         }
     });
 }
+
+// ── Presence keepalive: sends available ping to WA every 30 min ─────────────
+// Keeps the WebSocket connection warm and prevents silent drops.
+setInterval(async () => {
+    if (!sockRef || botStatus !== '✅ Connected — bot is running') return;
+    try {
+        await sockRef.sendPresenceUpdate('available');
+        console.log('[PING] Presence keepalive sent');
+    } catch (e) { console.warn('[PING] Presence failed:', e.message); }
+}, 30 * 60 * 1000);
+
+// ── Zombie watchdog: if connected but no WA events for 90+ min, reconnect ────
+// Zombie = Baileys says "Connected" but WhatsApp stopped routing messages.
+// Reconnecting the socket (without clearing auth) restores the session without a QR scan.
+setInterval(() => {
+    if (botStatus !== '✅ Connected — bot is running') return;
+    const minutesAlive = Math.round((Date.now() - botStartTime) / 60000);
+    const minutesSilent = Math.round((Date.now() - lastActivityTime) / 60000);
+    console.log(`[WATCHDOG] alive=${minutesAlive}m silent=${minutesSilent}m`);
+    if (minutesAlive > 60 && minutesSilent > 90) {
+        console.warn(`[WATCHDOG] No WA events for ${minutesSilent}m — socket reconnect`);
+        try { if (sockRef) sockRef.end(new Error('watchdog-zombie')); }
+        catch (e) { console.error('[WATCHDOG] Error:', e.message); }
+    }
+}, 30 * 60 * 1000); // check every 30 min, triggers when silent > 90 min
+
+// ── Memory cleanup: runs every 2 hours ───────────────────────────────────────
+// Prevents RSS growth from stale conversation histories and unbounded Sets.
+setInterval(() => {
+    // Drop conversation histories for contacts inactive for the whole 2h window
+    // (getAIReply already caps each history at 20 messages, so only the key count matters)
+    let cleaned = 0;
+    for (const key of Object.keys(conversations)) {
+        const conv = conversations[key];
+        if (Array.isArray(conv) && conv.length === 0) { delete conversations[key]; cleaned++; }
+    }
+    // Trim botSentIds if it grew unexpectedly large (delivery acks can be delayed)
+    if (botSentIds.size > 200) {
+        const arr = [...botSentIds];
+        arr.slice(0, arr.length - 100).forEach(id => botSentIds.delete(id));
+    }
+    const mem = process.memoryUsage();
+    console.log(`[CLEANUP] RSS=${Math.round(mem.rss/1024/1024)}MB Heap=${Math.round(mem.heapUsed/1024/1024)}MB convKeys=${Object.keys(conversations).length} emptyRemoved=${cleaned}`);
+}, 2 * 60 * 60 * 1000);
 
 console.log('🚀 Starting Artistica WhatsApp AI Bot...');
 startBot().catch(err => {
