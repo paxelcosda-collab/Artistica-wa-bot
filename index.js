@@ -279,6 +279,25 @@ app.get('/test-send', async (req, res) => {
     }
 });
 
+// Send a custom alert message — used by external scanners (email, web monitors)
+// GET /alert?to=628xxx&msg=your+message&key=arts2026
+app.get('/alert', async (req, res) => {
+    if (req.query.key !== (process.env.CRM_PIN || 'arts2026')) return res.status(403).json({ error: 'forbidden' });
+    if (!sockRef) return res.status(503).json({ error: 'bot not ready' });
+    const to = (req.query.to || '6281703134410') + '@s.whatsapp.net';
+    const msg = (req.query.msg || '').trim();
+    if (!msg) return res.status(400).json({ error: 'msg required' });
+    try {
+        const result = await sockRef.sendMessage(to, { text: msg });
+        if (result?.key?.id) botSentIds.add(result.key.id);
+        console.log(`📣 alert sent to ${to}: ${msg.substring(0, 60)}`);
+        res.json({ success: true });
+    } catch (err) {
+        console.error(`📣 alert to ${to} FAILED:`, err.message);
+        res.json({ success: false, error: err.message });
+    }
+});
+
 // Check if number exists on WhatsApp
 app.get('/check-number', async (req, res) => {
     if (!sockRef) return res.send('Bot not ready');
