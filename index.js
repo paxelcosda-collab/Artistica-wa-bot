@@ -23,6 +23,7 @@ function forwardToDjango(payload) {
             direction: payload.direction || 'in',
             is_ai: payload.is_ai ? '1' : '0',
         });
+        if (payload.name_only) params.set('name_only', '1');
         const url = new URL(DJANGO_FORWARD_URL);
         url.search = params.toString();
         const proto = url.protocol === 'https:' ? https : require('http');
@@ -158,7 +159,7 @@ function timeAgo(iso) {
 function upsertCRM(phone, text, role) {
     const now = new Date().toISOString();
     if (!crmData[phone]) {
-        crmData[phone] = { phone, firstContact: now, lastMessage: '', lastMessageTime: now, status: 'new', notes: '', msgCount: 0, conv: [] };
+        crmData[phone] = { phone, firstContact: now, lastMessage: '', lastMessageTime: now, status: 'new', notes: '', msgCount: 0, conv: [], name: '', askedForName: false };
     }
     const r = crmData[phone];
     if (text) { r.lastMessage = text.substring(0, 150); r.lastMessageTime = now; }
@@ -777,25 +778,56 @@ If a message is clearly someone advertising or offering their own product or ser
 - End with a helpful next step or question`;
 
 
-async function getAIReply(contactId, text) {
+function buildSystemPrompt(knownName, shouldAskName) {
+    let prompt = SYSTEM_PROMPT;
+    if (knownName) {
+        prompt += `\n\nThe customer's name is ${knownName}. Address them by name naturally where it fits — not every message, just where it feels human.`;
+    } else if (shouldAskName) {
+        prompt += `\n\nThis is a new customer and we don't know their name yet. Early in your reply, naturally ask what you should call them — friendly, not like a form field. Example tone: "Halo! Sebelumnya, boleh tau ini dengan siapa ya? 😊" Blend it into your greeting, don't make it a separate interrogation.`;
+    }
+    prompt += `\n\nIMPORTANT — name capture: if the customer states or confirms their name anywhere in their message (whether you just asked or they mention it unprompted), include this exact marker as its own line anywhere in your reply: [NAME:Their Name] using their name properly capitalized. This marker is stripped automatically before the customer sees it, so never explain it or mention it to them. Only include it when a real name was actually given.`;
+    return prompt;
+}
+
+async function getAIReply(contactId, text, phoneNum) {
     if (!conversations[contactId]) conversations[contactId] = [];
     conversations[contactId].push({ role: 'user', content: text });
     if (conversations[contactId].length > 20)
         conversations[contactId] = conversations[contactId].slice(-20);
 
+    const cust = crmData[phoneNum];
+    const knownName = cust?.name || '';
+    const shouldAskName = !knownName && !cust?.askedForName;
+
     const response = await anthropic.messages.create({
         model: 'claude-haiku-4-5-20251001',
         max_tokens: 400,
-        system: SYSTEM_PROMPT,
+        system: buildSystemPrompt(knownName, shouldAskName),
         messages: conversations[contactId],
     });
 
     let reply = response.content[0].text.trim();
     let handoff = false;
 
+    const nameMatch = reply.match(/\[NAME:\s*([^\]\n]+?)\s*\]/);
+    if (nameMatch) {
+        const candidate = nameMatch[1].trim();
+        reply = reply.replace(nameMatch[0], '').trim();
+        if (candidate.length >= 2 && candidate.length <= 50 && !/their name/i.test(candidate) && cust) {
+            cust.name = candidate;
+            saveCRM();
+            forwardToDjango({ phone: phoneNum, name: candidate, name_only: true });
+        }
+    }
+
     if (reply.startsWith('[HANDOFF]')) {
         handoff = true;
         reply = reply.replace('[HANDOFF]', '').trim();
+    }
+
+    if (shouldAskName && cust) {
+        cust.askedForName = true;
+        saveCRM();
     }
 
     conversations[contactId].push({ role: 'assistant', content: reply });
@@ -1050,7 +1082,7 @@ async function startBot() {
             upsertCRM(phoneNum, text, 'customer');
 
             try {
-                const { text: reply, handoff } = await getAIReply(replyTo, text);
+                const { text: reply, handoff } = await getAIReply(replyTo, text, phoneNum);
                 // Re-check exclusion after the async AI call — the team may have
                 // replied while we were waiting for the AI response.
                 if (isExcluded(phoneNum, fromNum)) {
