@@ -19,6 +19,7 @@ function forwardToDjango(payload) {
             key: DJANGO_FORWARD_KEY,
             phone: payload.phone || '',
             text: (payload.text || '').substring(0, 2000),
+            name: payload.name || '',
             direction: payload.direction || 'in',
             is_ai: payload.is_ai ? '1' : '0',
         });
@@ -1005,7 +1006,7 @@ async function startBot() {
                 '[media]'
             ).trim();
             upsertCRM(phoneNum, rawText, 'customer');
-            forwardToDjango({ phone: phoneNum, text: rawText, direction: 'in' });
+            forwardToDjango({ phone: phoneNum, text: rawText, name: msg.pushName || '', direction: 'in' });
             console.log(`📩 [${type}] from:${phoneNum} text:"${rawText.substring(0,40)}" excluded:${isExcluded(phoneNum,fromNum)}`);
 
             if (isExcluded(phoneNum, fromNum)) continue;
