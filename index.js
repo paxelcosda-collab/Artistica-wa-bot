@@ -129,9 +129,34 @@ function isSoftExcluded(num) {
     if (Date.now() > exp) { softExcluded.delete(num); saveSoftExcluded(); return false; }
     return true;
 }
+// LID <-> phone map. Team replies arrive under an @lid id while the customer's
+// messages resolve to a phone number, so exclusions must be linked across both.
+const LID_MAP_FILE = './auth_session/lid_map.json';
+function loadLidMap() { try { return JSON.parse(fs.readFileSync(LID_MAP_FILE, 'utf8')); } catch (_) { return {}; } }
+const lidToPhone = loadLidMap();
+const phoneToLid = {};
+for (const [lid, ph] of Object.entries(lidToPhone)) phoneToLid[ph] = lid;
+
+function learnLid(lid, phone) {
+    if (!lid || !phone || lid === phone) return;
+    if (lidToPhone[lid] !== phone) {
+        lidToPhone[lid] = phone;
+        phoneToLid[phone] = lid;
+        try { fs.writeFileSync(LID_MAP_FILE, JSON.stringify(lidToPhone)); } catch (_) {}
+    }
+    // Team replied earlier under the LID: carry that exclusion over to the phone number
+    if (excludedNumbers.has(lid) && !excludedNumbers.has(phone)) {
+        excludedNumbers.add(phone);
+        saveExcluded(excludedNumbers);
+        console.log(`Linked LID ${lid} -> ${phone}, exclusion carried over`);
+    }
+}
+
 function isExcluded(phoneNum, fromNum) {
+    const lid = phoneToLid[phoneNum];
     return excludedNumbers.has(phoneNum) || excludedNumbers.has(fromNum) ||
-           isSoftExcluded(phoneNum) || isSoftExcluded(fromNum);
+           isSoftExcluded(phoneNum) || isSoftExcluded(fromNum) ||
+           (lid && (excludedNumbers.has(lid) || isSoftExcluded(lid)));
 }
 
 // ── CRM ───────────────────────────────────────────────────────────────────────
@@ -948,14 +973,21 @@ async function startBot() {
                 saveExcluded(excludedNumbers);
                 console.log(`Re-enabled bot for ${num}`);
             }
-            // Team manually replied → permanently exclude so bot stays silent until re-enabled via dashboard or !include
-            // Only use the resolved phone number (replyTo prefix), never the raw @lid prefix.
-            if (text && !text.startsWith('!')) {
-                const num = replyTo.split('@')[0];
-                excludedNumbers.add(num);
-                softExcluded.delete(num);
+            // Team manually replied (text OR photo/voice note/video/document) → permanently exclude
+            // until re-enabled via dashboard or !include. Exclude under the phone number AND the
+            // LID (if the chat is a LID chat) so the customer's next message matches either way.
+            const _ignoredTypes = ['protocolMessage', 'reactionMessage', 'senderKeyDistributionMessage', 'messageContextInfo', 'pollUpdateMessage', 'editedMessage'];
+            const _isHumanContent = Object.keys(msg.message).some(k => !_ignoredTypes.includes(k));
+            if (_isHumanContent && !text.startsWith('!')) {
+                const nums = new Set([replyTo.split('@')[0]]);
+                if (from.endsWith('@lid')) {
+                    const lid = from.split('@')[0];
+                    nums.add(lid);
+                    if (lidToPhone[lid]) nums.add(lidToPhone[lid]);
+                }
+                for (const num of nums) { excludedNumbers.add(num); softExcluded.delete(num); }
                 saveExcluded(excludedNumbers);
-                console.log(`Permanently excluded ${num} — team replied manually`);
+                console.log(`Permanently excluded ${[...nums].join('/')} — team replied manually`);
             }
         }
 
@@ -1027,6 +1059,7 @@ async function startBot() {
             // Skip excluded numbers — use resolved phone number only; never use raw @lid prefix as check key
             const phoneNum = replyTo.split('@')[0];
             const fromNum = from.endsWith('@lid') ? phoneNum : from.split('@')[0];
+            if (from.endsWith('@lid')) learnLid(from.split('@')[0], phoneNum);
 
             // Log ALL arrivals to CRM before exclusion check — for diagnostics
             const rawText = (
