@@ -805,6 +805,7 @@ If a message is clearly someone advertising or offering their own product or ser
 
 function buildSystemPrompt(knownName, shouldAskName) {
     let prompt = SYSTEM_PROMPT;
+    prompt += `\n\nA customer's first message may end with a tag like "[page: /jewelry-repair/]". It shows which website page they came from. Never repeat or mention the tag. Use it only as context (e.g. /jewelry-repair/ means repair enquiry, /wedding-ring/ wedding rings, /jewelry-making-class/ the class, /custom-design/ custom work).`;
     if (knownName) {
         prompt += `\n\nThe customer's name is ${knownName}. Address them by name naturally where it fits — not every message, just where it feels human.`;
     } else if (shouldAskName) {
