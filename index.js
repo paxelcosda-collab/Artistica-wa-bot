@@ -491,9 +491,9 @@ app.get('/crm', (req, res) => {
         const lbl = STATUS_LABELS[c.status] || c.status;
         return `<a href="/crm/detail?pin=${pin}&phone=${c.phone}" style="text-decoration:none;color:inherit;display:block">
 <div style="background:#fff;border-radius:10px;padding:14px 16px;margin-bottom:10px;border-left:4px solid ${col};box-shadow:0 1px 4px rgba(0,0,0,.08)">
-  <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:5px">
+  <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:5px;flex-wrap:wrap;gap:6px">
     <span style="font-weight:600;font-size:15px">+${c.phone}</span>
-    <div style="display:flex;gap:8px;align-items:center">
+    <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
       <span style="font-size:12px;color:#9aa0a6">${timeAgo(c.lastMessageTime)}</span>
       <span style="background:${col};color:#fff;padding:2px 10px;border-radius:12px;font-size:12px;font-weight:600">${lbl}</span>
     </div>
@@ -505,12 +505,12 @@ app.get('/crm', (req, res) => {
 
     res.send(`<!DOCTYPE html><html><head><title>Artistica CRM</title>
 <meta name=viewport content="width=device-width,initial-scale=1">
-<style>*{box-sizing:border-box}body{font-family:sans-serif;margin:0;background:#f1f3f4;min-height:100vh}
-.topbar{background:#1a73e8;color:#fff;padding:14px 16px;display:flex;justify-content:space-between;align-items:center;position:sticky;top:0;z-index:10}
+<style>*{box-sizing:border-box}html{overflow-x:hidden}body{font-family:sans-serif;margin:0;background:#f1f3f4;min-height:100vh;max-width:100vw;overflow-x:hidden}
+.topbar{background:#1a73e8;color:#fff;padding:14px 16px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;position:sticky;top:0;z-index:10}
 .topbar h1{margin:0;font-size:17px;font-weight:600}
-.alerts{display:flex;gap:8px}
-.alert{background:rgba(255,255,255,.2);border-radius:20px;padding:3px 10px;font-size:12px;font-weight:600}
-.content{max-width:720px;margin:0 auto;padding:16px}
+.alerts{display:flex;gap:8px;flex-wrap:wrap}
+.alert{background:rgba(255,255,255,.2);border-radius:20px;padding:3px 10px;font-size:12px;font-weight:600;white-space:nowrap}
+.content{max-width:720px;margin:0 auto;padding:16px;width:100%}
 .tabs{display:flex;gap:8px;margin-bottom:14px;flex-wrap:wrap}
 .empty{text-align:center;color:#9aa0a6;padding:60px 20px;font-size:15px}
 </style></head>
