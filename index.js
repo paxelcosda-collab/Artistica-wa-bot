@@ -414,17 +414,6 @@ app.get('/debug', (req, res) => {
     });
 });
 
-// TEMPORARY: one-time export for the Django migration. Remove after migrating.
-app.get('/export-all', (req, res) => {
-    if ((req.query.pin || '') !== CRM_PIN) return res.status(403).json({ error: 'forbidden' });
-    res.json({
-        crm: crmData,
-        excluded: [...excludedNumbers],
-        softExcluded: [...softExcluded],
-        lidToPhone,
-    });
-});
-
 app.get('/recent-events', (req, res) => {
     res.json({ count: recentEvents.length, events: [...recentEvents].reverse() });
 });
