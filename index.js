@@ -39,6 +39,7 @@ function forwardToDjango(payload) {
 // ("unexpected error in 'init queries': Timed Out") and restart automatically.
 let restartScheduled = false;
 let botStartTime = Date.now();
+let reconnectAttempts = 0;
 
 const SESSION_KEEP = new Set(['excluded.json', 'crm_data.json', 'soft_excluded.json']);
 function clearAuthSession() {
@@ -58,13 +59,11 @@ const baileysLogStream = new Writable({
             (line.includes('Timed Out') || line.includes('408'))) {
             restartScheduled = true;
             const aliveMs = Date.now() - botStartTime;
-            if (aliveMs < 60000) {
-                console.error('[BOT] Zombie at startup — clearing auth so next reconnect shows QR...');
-                clearAuthSession();
-            } else {
-                console.error(`[BOT] Zombie after ${Math.round(aliveMs/1000)}s — closing socket for reconnect...`);
-            }
-            // Close socket: triggers connection.update → startBot() after 10s, no process.exit
+            // Never clear the login here. This timeout is common right after a normal reconnect, and
+            // clearing auth on it turned ordinary network blips into full logouts that needed a QR scan.
+            // Only a real logout from WhatsApp (DisconnectReason.loggedOut) clears the session.
+            console.error(`[BOT] init queries timed out after ${Math.round(aliveMs/1000)}s — closing socket for reconnect (login kept)...`);
+            // Close socket: triggers connection.update → startBot() with backoff, no process.exit
             try { if (sockRef) sockRef.end(new Error('zombie-reconnect')); }
             catch (e) { console.error('[BOT] Socket close error:', e.message); }
         }
@@ -935,7 +934,7 @@ async function startBot() {
             const statusCode = lastDisconnect?.error?.output?.statusCode;
             const loggedOut = statusCode === DisconnectReason.loggedOut;
             console.log(`Connection closed (code ${statusCode}), logged out: ${loggedOut}`);
-            botStatus = 'Reconnecting...';
+            botStatus = `Reconnecting... (code ${statusCode})`;
             qrDataUrl = null;
 
             if (loggedOut) {
@@ -943,9 +942,14 @@ async function startBot() {
                 clearAuthSession();
                 setTimeout(startBot, 3000);
             } else {
-                setTimeout(startBot, 10000);
+                // Back off 10s, 20s, 40s ... up to 2 min so a flaky network does not hammer WhatsApp
+                const delay = Math.min(10000 * 2 ** reconnectAttempts, 120000);
+                reconnectAttempts++;
+                console.log(`Reconnect attempt ${reconnectAttempts} in ${delay / 1000}s`);
+                setTimeout(startBot, delay);
             }
         } else if (connection === 'open') {
+            reconnectAttempts = 0;
             console.log('✅ WhatsApp connected! Bot is running.');
             botStatus = '✅ Connected — bot is running';
             qrDataUrl = null;
