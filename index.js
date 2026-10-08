@@ -73,6 +73,7 @@ const baileysLogStream = new Writable({
 
 let botStatus = 'Starting...';
 let qrDataUrl = null;
+let pairingCode = null;
 let botEnabled = true;
 const conversations = {};
 let lastActivityTime = Date.now(); // updated on every WA event; used by zombie watchdog
@@ -219,12 +220,30 @@ button:hover{background:#1557b0}</style></head>
 // ── Express dashboard ──────────────────────────────────────────────────────────
 const app = express();
 
+app.get('/qr.json', (req, res) => {
+    res.json({ connected: botStatus.includes('Connected'), status: botStatus, qr: qrDataUrl });
+});
+
+app.post('/pair', express.urlencoded({ extended: false }), async (req, res) => {
+    if ((req.body.pin || '') !== CRM_PIN) return res.status(403).send('Wrong PIN. <a href="/">Back</a>');
+    try {
+        if (!sockRef || sockRef.authState?.creds?.registered) return res.redirect('/');
+        pairingCode = await sockRef.requestPairingCode('6281703553530');
+        console.log('[BOT] Pairing code requested');
+    } catch (e) {
+        console.error('[BOT] Pairing code error:', e.message);
+        return res.send('Could not get a code right now (' + e.message + '). Wait 10 seconds and try again. <a href="/">Back</a>');
+    }
+    res.redirect('/');
+});
+
 app.get('/', (req, res) => {
     const excluded = [...excludedNumbers];
     res.send(`<!DOCTYPE html>
 <html><head><title>Artistica Bot</title>
 <script>
-var _rt; function _resetTimer(){clearTimeout(_rt);_rt=setTimeout(()=>location.reload(),10000);}
+var _rt; function _resetTimer(){clearTimeout(_rt);if(document.getElementById('qrimg')||document.getElementById('paircode'))return;_rt=setTimeout(()=>location.reload(),10000);}
+setInterval(()=>{if(!document.getElementById('qrimg')&&!document.getElementById('paircode'))return;fetch('/qr.json').then(r=>r.json()).then(d=>{if(d.connected){location.reload();return;}var i=document.getElementById('qrimg');if(i&&d.qr&&i.src!==d.qr)i.src=d.qr;var s=document.getElementById('qrstatus');if(s)s.textContent=d.status;}).catch(()=>{});},3000);
 document.addEventListener('DOMContentLoaded',()=>{
   _resetTimer();
   document.querySelectorAll('input,textarea,select').forEach(el=>{
@@ -263,11 +282,23 @@ input[type=text]{padding:7px 10px;border:1px solid #ccc;border-radius:6px;font-s
 ${qrDataUrl ? `
 <div class="card" style="border-color:#1a7f37;background:#e8f5e9">
   <h2 style="margin:0 0 12px">📱 Scan this QR code with WhatsApp</h2>
-  <img src="${qrDataUrl}" style="width:256px;height:256px;display:block">
+  <img id="qrimg" src="${qrDataUrl}" style="width:256px;height:256px;display:block">
+  <p id="qrstatus" style="font-size:12px;color:#555;margin:6px 0 0">The code changes every ~20 seconds by itself. Just keep the phone camera pointed at it.</p>
   <ol style="margin-top:16px">
     <li>Open WhatsApp on <strong>+62 817 0355 3530</strong></li>
     <li>Tap <strong>⋮ Menu → Linked Devices → Link a Device</strong></li>
     <li>Point camera at the QR code above</li>
+  </ol>
+  <p style="margin:14px 0 6px"><strong>QR not working?</strong> Link with a code instead:</p>
+  <form method="post" action="/pair"><input type="text" name="pin" placeholder="dashboard PIN"> <button class="btn btn-green" type="submit">Get 8-letter link code</button></form>
+</div>` : ''}
+${pairingCode ? `
+<div class="card" id="paircode" style="border-color:#1a7f37;background:#e8f5e9">
+  <h2 style="margin:0 0 8px">🔑 Link code: <span style="font-family:monospace;letter-spacing:3px">${pairingCode}</span></h2>
+  <ol style="margin:8px 0 0">
+    <li>On the Artistica phone: WhatsApp Business ⋮ → <strong>Linked devices → Link a device</strong></li>
+    <li>Tap <strong>Link with phone number instead</strong></li>
+    <li>Type the code above (valid for a few minutes)</li>
   </ol>
 </div>` : ''}
 
@@ -936,20 +967,24 @@ async function startBot() {
             console.log(`Connection closed (code ${statusCode}), logged out: ${loggedOut}`);
             botStatus = `Reconnecting... (code ${statusCode})`;
             qrDataUrl = null;
+            pairingCode = null; // a link code only works on the socket that requested it
 
             if (loggedOut) {
                 console.log('Logged out — clearing session files and reconnecting...');
                 clearAuthSession();
                 setTimeout(startBot, 3000);
             } else {
-                // Back off 10s, 20s, 40s ... up to 2 min so a flaky network does not hammer WhatsApp
-                const delay = Math.min(10000 * 2 ** reconnectAttempts, 120000);
-                reconnectAttempts++;
+                // Waiting for a scan: get a fresh QR right away. Otherwise back off 10s, 20s ... up to 2 min
+                // so a flaky network does not hammer WhatsApp.
+                const waitingForScan = !sock.authState?.creds?.registered;
+                const delay = waitingForScan ? 3000 : Math.min(10000 * 2 ** reconnectAttempts, 120000);
+                if (!waitingForScan) reconnectAttempts++;
                 console.log(`Reconnect attempt ${reconnectAttempts} in ${delay / 1000}s`);
                 setTimeout(startBot, delay);
             }
         } else if (connection === 'open') {
             reconnectAttempts = 0;
+            pairingCode = null;
             console.log('✅ WhatsApp connected! Bot is running.');
             botStatus = '✅ Connected — bot is running';
             qrDataUrl = null;
