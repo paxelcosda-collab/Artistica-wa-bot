@@ -365,7 +365,9 @@ app.get('/test-send', async (req, res) => {
 app.get('/alert', async (req, res) => {
     if (req.query.key !== (process.env.CRM_PIN || 'arts2026')) return res.status(403).json({ error: 'forbidden' });
     if (!sockRef) return res.status(503).json({ error: 'bot not ready' });
-    const to = (req.query.to || '6281703134410') + '@s.whatsapp.net';
+    const num = (req.query.to || '6281703134410').replace(/[^0-9]/g, '');
+    // Customers whose chat runs on an @lid id can only read messages sent to that @lid chat
+    const to = phoneToLid[num] ? phoneToLid[num] + '@lid' : num + '@s.whatsapp.net';
     const msg = (req.query.msg || '').trim();
     if (!msg) return res.status(400).json({ error: 'msg required' });
     try {
@@ -1077,6 +1079,10 @@ async function startBot() {
             if (from.endsWith('@lid') && !msg.key.senderPn) continue;
             const _pn = msg.key.senderPn;
             const replyTo = from.endsWith('@lid') ? (_pn && _pn.includes('@') ? _pn : (_pn || from) + '@s.whatsapp.net') : from;
+            // Send into the chat the customer actually wrote from. WhatsApp encrypts @lid chats with a
+            // different session than the phone number, so replying to the phone JID arrives as
+            // "Waiting for this message" on both phones. replyTo stays the key for history and CRM.
+            const sendTo = from.endsWith('@lid') ? from : replyTo;
 
             // ── Admin commands from CS number ──────────────────────────────────
             {
@@ -1100,7 +1106,7 @@ async function startBot() {
                         }
                         if (_reply) {
                             try {
-                                const _sent = await sock.sendMessage(replyTo, { text: _reply });
+                                const _sent = await sock.sendMessage(sendTo, { text: _reply });
                                 if (_sent?.key?.id) botSentIds.add(_sent.key.id);
                                 console.log(`🔧 Admin ${_admNum}: ${_admText} → ${_reply}`);
                             } catch (e) { console.error('Admin cmd reply error:', e.message); }
@@ -1157,7 +1163,7 @@ async function startBot() {
                 }
                 if (ackText) {
                     try {
-                        const sent = await sock.sendMessage(replyTo, { text: ackText });
+                        const sent = await sock.sendMessage(sendTo, { text: ackText });
                         if (sent?.key?.id) botSentIds.add(sent.key.id);
                         console.log(`📤 non-text ack sent to ${replyTo}`);
                     } catch (e) {
@@ -1187,14 +1193,11 @@ async function startBot() {
                     console.log(`⚠️ ${phoneNum} excluded during pre-send hold — discarding bot reply`);
                     continue;
                 }
-                // Always send to @s.whatsapp.net (replyTo).
-                // If the message arrived via @lid, remap the quoted key's remoteJid to @s.whatsapp.net
-                // so the quoted context doesn't carry an @lid JID (which causes error 463).
-                const quotedMsg = from.endsWith('@lid')
-                    ? { ...msg, key: { ...msg.key, remoteJid: replyTo } }
-                    : msg;
-                const sent = await sock.sendMessage(replyTo, { text: reply }, { quoted: quotedMsg });
-                console.log(`📤 sent to ${replyTo}, key: ${sent?.key?.id}, status: ${sent?.status}`);
+                // @lid chats: send into the @lid chat without a quote (quoting an @lid message caused 463 before).
+                const sent = from.endsWith('@lid')
+                    ? await sock.sendMessage(sendTo, { text: reply })
+                    : await sock.sendMessage(sendTo, { text: reply }, { quoted: msg });
+                console.log(`📤 sent to ${sendTo}, key: ${sent?.key?.id}, status: ${sent?.status}`);
                 if (sent?.key?.id) botSentIds.add(sent.key.id);
                 console.log(`🤖 Replied to ${replyTo}: ${reply.substring(0, 80)}...\n`);
                 upsertCRM(phoneNum, reply, 'tica');
@@ -1213,7 +1216,7 @@ async function startBot() {
                 // Fallback: send without quoted context
                 try {
                     const fallback = conversations[replyTo]?.slice(-1)[0]?.content || 'Halo! Terima kasih sudah menghubungi Artistica Jewelry. Kami akan segera membalas.';
-                    const sent2 = await sock.sendMessage(replyTo, { text: fallback });
+                    const sent2 = await sock.sendMessage(sendTo, { text: fallback });
                     console.log(`📤 fallback sent to ${replyTo}, key: ${sent2?.key?.id}, status: ${sent2?.status}`);
                     if (sent2?.key?.id) botSentIds.add(sent2.key.id);
                 } catch (err2) {
